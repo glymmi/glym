@@ -73,11 +73,26 @@ pub const Renderer = struct {
     }
 
     /// Write a single cell into the back buffer. Out-of-bounds writes are
-    /// silently ignored.
+    /// silently ignored. This is a raw overwrite primitive: it does not
+    /// look at the existing cell. Use `applyCell` (or the higher-level
+    /// `writeStyledText` / `drawBorder` helpers) when you want to layer
+    /// a new fg/attribute on top of an existing background.
     pub fn setCell(self: *Renderer, row: u16, col: u16, cell: Cell) void {
         if (row >= self.rows or col >= self.cols) return;
         const idx = @as(usize, row) * self.cols + col;
         self.back[idx] = cell;
+    }
+
+    /// Layer a new char and style onto an existing cell. Any field of
+    /// `new_style` left at its default (fg/bg = `.default`, attributes
+    /// false) inherits from the cell already in the back buffer, so a
+    /// border drawn over a filled rect keeps the rect's background and
+    /// text written on top of the same rect picks it up too.
+    pub fn applyCell(self: *Renderer, row: u16, col: u16, ch: u21, new_style: Style) void {
+        if (row >= self.rows or col >= self.cols) return;
+        const idx = @as(usize, row) * self.cols + col;
+        const existing = self.back[idx];
+        self.back[idx] = .{ .char = ch, .style = Style.merge(existing.style, new_style) };
     }
 
     /// Write a UTF-8 string starting at (row, col), one cell per codepoint.
@@ -87,7 +102,10 @@ pub const Renderer = struct {
         self.writeStyledText(row, col, text, .{});
     }
 
-    /// Like `writeText` but applies the given style to every cell.
+    /// Like `writeText` but applies the given style to every cell. Any
+    /// field of `style` left at its default inherits the existing
+    /// background under the text, so writing on top of a filled panel
+    /// preserves the panel color.
     pub fn writeStyledText(self: *Renderer, row: u16, col: u16, text: []const u8, style: Style) void {
         if (row >= self.rows) return;
         var c = col;
@@ -97,7 +115,7 @@ pub const Renderer = struct {
             const len = std.unicode.utf8ByteSequenceLength(text[i]) catch return;
             if (i + len > text.len) return;
             const cp = std.unicode.utf8Decode(text[i .. i + len]) catch return;
-            self.setCell(row, c, .{ .char = cp, .style = style });
+            self.applyCell(row, c, cp, style);
             c += 1;
             i += len;
         }
@@ -140,7 +158,7 @@ pub const Renderer = struct {
                 @as(f32, @floatFromInt(idx)) / @as(f32, @floatFromInt(cp_count - 1));
             var s = base;
             s.fg = .{ .rgb = color.lerpRgb(start, end, t) };
-            self.setCell(row, c, .{ .char = cp, .style = s });
+            self.applyCell(row, c, cp, s);
             c += 1;
             i += len;
             idx += 1;
@@ -180,21 +198,21 @@ pub const Renderer = struct {
         const last_row = row + height - 1;
         const last_col = col + width - 1;
         // Corners.
-        self.setCell(row, col, .{ .char = border.top_left, .style = style });
-        self.setCell(row, last_col, .{ .char = border.top_right, .style = style });
-        self.setCell(last_row, col, .{ .char = border.bottom_left, .style = style });
-        self.setCell(last_row, last_col, .{ .char = border.bottom_right, .style = style });
+        self.applyCell(row, col, border.top_left, style);
+        self.applyCell(row, last_col, border.top_right, style);
+        self.applyCell(last_row, col, border.bottom_left, style);
+        self.applyCell(last_row, last_col, border.bottom_right, style);
         // Top and bottom edges.
         var c: u16 = col + 1;
         while (c < last_col) : (c += 1) {
-            self.setCell(row, c, .{ .char = border.top, .style = style });
-            self.setCell(last_row, c, .{ .char = border.bottom, .style = style });
+            self.applyCell(row, c, border.top, style);
+            self.applyCell(last_row, c, border.bottom, style);
         }
         // Left and right edges.
         var r: u16 = row + 1;
         while (r < last_row) : (r += 1) {
-            self.setCell(r, col, .{ .char = border.left, .style = style });
-            self.setCell(r, last_col, .{ .char = border.right, .style = style });
+            self.applyCell(r, col, border.left, style);
+            self.applyCell(r, last_col, border.right, style);
         }
     }
 
@@ -219,9 +237,9 @@ pub const Renderer = struct {
         const max_title: u16 = width - 4;
         const shown: u16 = if (title_len > max_title) max_title else @intCast(title_len);
         const start_col: u16 = col + (width - shown - 2) / 2;
-        self.setCell(row, start_col, .{ .char = ' ', .style = style });
+        self.applyCell(row, start_col, ' ', style);
         self.writeStyledText(row, start_col + 1, title, title_style);
-        self.setCell(row, start_col + 1 + shown, .{ .char = ' ', .style = style });
+        self.applyCell(row, start_col + 1 + shown, ' ', style);
     }
 
     /// Draw a filled bordered box: paint the interior with `fill`, then
@@ -482,6 +500,31 @@ test "drawBorderTitled places title on the top edge" {
     try std.testing.expectEqual(@as(u21, 'h'), r.back[5].char);
     try std.testing.expectEqual(@as(u21, 'i'), r.back[6].char);
     try std.testing.expectEqual(@as(u21, ' '), r.back[7].char);
+}
+
+test "writeStyledText inherits underlying background" {
+    var r = try Renderer.init(std.testing.allocator, 1, 5);
+    defer r.deinit();
+    const panel: Style = .{ .bg = .{ .indexed = 4 } };
+    r.fillRect(0, 0, 1, 5, .{ .char = ' ', .style = panel });
+    r.writeStyledText(0, 1, "hi", .{ .fg = .{ .indexed = 7 }, .bold = true });
+    try std.testing.expectEqual(@as(u21, 'h'), r.back[1].char);
+    try std.testing.expectEqual(@as(u8, 7), r.back[1].style.fg.indexed);
+    try std.testing.expectEqual(@as(u8, 4), r.back[1].style.bg.indexed);
+    try std.testing.expect(r.back[1].style.bold);
+}
+
+test "drawBorder inherits underlying background" {
+    var r = try Renderer.init(std.testing.allocator, 3, 3);
+    defer r.deinit();
+    const panel: Style = .{ .bg = .{ .indexed = 4 } };
+    r.fillRect(0, 0, 3, 3, .{ .char = ' ', .style = panel });
+    const border_style: Style = .{ .fg = .{ .indexed = 5 } };
+    r.drawBorder(0, 0, 3, 3, Border.sharp, border_style);
+    // Top-left corner: fg from border, bg bleeds through from the fill.
+    try std.testing.expectEqual(@as(u21, 0x250C), r.back[0].char);
+    try std.testing.expectEqual(@as(u8, 5), r.back[0].style.fg.indexed);
+    try std.testing.expectEqual(@as(u8, 4), r.back[0].style.bg.indexed);
 }
 
 test "drawBox fills the interior and frames it" {
