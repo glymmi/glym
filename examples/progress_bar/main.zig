@@ -53,7 +53,7 @@ fn update(model: *Model, m: P.Msg) P.Cmd {
     return .none;
 }
 
-fn view(model: *const Model, r: *P.Renderer) void {
+fn view(model: *Model, r: *P.Renderer) void {
     r.writeStyledText(1, 2, "Progress bars - arrows to adjust, esc to quit", .{ .fg = .{ .indexed = 8 } });
     for (0..model.bars.len) |i| {
         const row: u16 = @intCast(3 + i * 2);

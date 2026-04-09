@@ -29,7 +29,7 @@ fn update(model: *Model, m: P.Msg) P.Cmd {
     return .none;
 }
 
-fn view(model: *const Model, r: *P.Renderer) void {
+fn view(model: *Model, r: *P.Renderer) void {
     r.writeStyledText(1, 2, "Type something:", .{ .bold = true });
     model.input.view(r, 3, 2, 30, .{ .fg = .{ .indexed = 15 } });
     r.writeStyledText(5, 2, "You typed:", .{ .fg = .{ .indexed = 8 } });

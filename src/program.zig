@@ -28,7 +28,7 @@ pub fn Program(comptime Model: type, comptime AppMsg: type) type {
 
         pub const InitFn = *const fn (std.mem.Allocator) anyerror!Model;
         pub const UpdateFn = *const fn (*Model, Msg) Cmd;
-        pub const ViewFn = *const fn (*const Model, *Renderer) void;
+        pub const ViewFn = *const fn (*Model, *Renderer) void;
 
         allocator: std.mem.Allocator,
         init_fn: InitFn,
@@ -180,7 +180,7 @@ test "step propagates quit from update" {
         fn updateFn(_: *Model, _: P.Msg) P.Cmd {
             return .quit;
         }
-        fn viewFn(_: *const Model, _: *P.Renderer) void {}
+        fn viewFn(_: *Model, _: *P.Renderer) void {}
     };
 
     const prog: P = .{
@@ -207,7 +207,7 @@ test "step keeps running when update returns none" {
         fn updateFn(_: *Model, _: P.Msg) P.Cmd {
             return .none;
         }
-        fn viewFn(_: *const Model, _: *P.Renderer) void {}
+        fn viewFn(_: *Model, _: *P.Renderer) void {}
     };
 
     const prog: P = .{
@@ -240,7 +240,7 @@ test "step mutates model on app msg" {
             }
             return .none;
         }
-        fn viewFn(_: *const Model, _: *P.Renderer) void {}
+        fn viewFn(_: *Model, _: *P.Renderer) void {}
     };
 
     const prog: P = .{
@@ -280,7 +280,7 @@ test "step runs custom command and feeds the result back into update" {
             }
             return .none;
         }
-        fn viewFn(_: *const Model, _: *P.Renderer) void {}
+        fn viewFn(_: *Model, _: *P.Renderer) void {}
     };
 
     const prog: P = .{
