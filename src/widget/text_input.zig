@@ -5,6 +5,10 @@
 //! forwarding key events to `handleKey` and asking the widget to render
 //! itself into a renderer rectangle via `view`. Horizontal scrolling keeps
 //! the cursor visible when the value is longer than the rendered width.
+//!
+//! `value` and `cursor` are intentionally public so apps can read or
+//! preset them; mutate them directly only when you do not need the
+//! widget's editing logic.
 
 const std = @import("std");
 const input = @import("../term/input.zig");
@@ -16,7 +20,9 @@ pub const TextInput = struct {
     value: std.ArrayList(u21),
     cursor: usize,
 
-    pub fn init(allocator: std.mem.Allocator) TextInput {
+    /// Create an empty text input. Returns an error union for signature
+    /// symmetry with `TextArea.init`; this constructor never fails.
+    pub fn init(allocator: std.mem.Allocator) !TextInput {
         return .{
             .allocator = allocator,
             .value = .{},
@@ -118,14 +124,14 @@ pub const TextInput = struct {
 };
 
 test "init starts empty with cursor at 0" {
-    var ti = TextInput.init(std.testing.allocator);
+    var ti = try TextInput.init(std.testing.allocator);
     defer ti.deinit();
     try std.testing.expectEqual(@as(usize, 0), ti.value.items.len);
     try std.testing.expectEqual(@as(usize, 0), ti.cursor);
 }
 
 test "insert advances cursor" {
-    var ti = TextInput.init(std.testing.allocator);
+    var ti = try TextInput.init(std.testing.allocator);
     defer ti.deinit();
     _ = try ti.handleKey(.{ .code = .{ .char = 'h' } });
     _ = try ti.handleKey(.{ .code = .{ .char = 'i' } });
@@ -136,7 +142,7 @@ test "insert advances cursor" {
 }
 
 test "ctrl plus char is not consumed" {
-    var ti = TextInput.init(std.testing.allocator);
+    var ti = try TextInput.init(std.testing.allocator);
     defer ti.deinit();
     const consumed = try ti.handleKey(.{
         .code = .{ .char = 'c' },
@@ -147,7 +153,7 @@ test "ctrl plus char is not consumed" {
 }
 
 test "backspace removes previous char" {
-    var ti = TextInput.init(std.testing.allocator);
+    var ti = try TextInput.init(std.testing.allocator);
     defer ti.deinit();
     try ti.setValue("abc");
     _ = try ti.handleKey(.{ .code = .backspace });
@@ -157,7 +163,7 @@ test "backspace removes previous char" {
 }
 
 test "backspace at start is a no-op" {
-    var ti = TextInput.init(std.testing.allocator);
+    var ti = try TextInput.init(std.testing.allocator);
     defer ti.deinit();
     try ti.setValue("abc");
     ti.cursor = 0;
@@ -167,7 +173,7 @@ test "backspace at start is a no-op" {
 }
 
 test "delete removes the char under cursor" {
-    var ti = TextInput.init(std.testing.allocator);
+    var ti = try TextInput.init(std.testing.allocator);
     defer ti.deinit();
     try ti.setValue("abc");
     ti.cursor = 1;
@@ -179,7 +185,7 @@ test "delete removes the char under cursor" {
 }
 
 test "delete at end is a no-op" {
-    var ti = TextInput.init(std.testing.allocator);
+    var ti = try TextInput.init(std.testing.allocator);
     defer ti.deinit();
     try ti.setValue("abc");
     _ = try ti.handleKey(.{ .code = .delete });
@@ -187,7 +193,7 @@ test "delete at end is a no-op" {
 }
 
 test "arrow left and right move the cursor" {
-    var ti = TextInput.init(std.testing.allocator);
+    var ti = try TextInput.init(std.testing.allocator);
     defer ti.deinit();
     try ti.setValue("abc");
     _ = try ti.handleKey(.{ .code = .arrow_left });
@@ -201,7 +207,7 @@ test "arrow left and right move the cursor" {
 }
 
 test "home and end jump to bounds" {
-    var ti = TextInput.init(std.testing.allocator);
+    var ti = try TextInput.init(std.testing.allocator);
     defer ti.deinit();
     try ti.setValue("abc");
     ti.cursor = 1;
@@ -212,14 +218,14 @@ test "home and end jump to bounds" {
 }
 
 test "unhandled key returns false" {
-    var ti = TextInput.init(std.testing.allocator);
+    var ti = try TextInput.init(std.testing.allocator);
     defer ti.deinit();
     const consumed = try ti.handleKey(.{ .code = .{ .f = 5 } });
     try std.testing.expect(!consumed);
 }
 
 test "setValue parses utf8" {
-    var ti = TextInput.init(std.testing.allocator);
+    var ti = try TextInput.init(std.testing.allocator);
     defer ti.deinit();
     try ti.setValue("héllo");
     try std.testing.expectEqual(@as(usize, 5), ti.value.items.len);
@@ -228,7 +234,7 @@ test "setValue parses utf8" {
 }
 
 test "valueAlloc encodes back to utf8" {
-    var ti = TextInput.init(std.testing.allocator);
+    var ti = try TextInput.init(std.testing.allocator);
     defer ti.deinit();
     try ti.setValue("héllo");
     const out = try ti.valueAlloc(std.testing.allocator);
@@ -237,7 +243,7 @@ test "valueAlloc encodes back to utf8" {
 }
 
 test "view writes value into renderer" {
-    var ti = TextInput.init(std.testing.allocator);
+    var ti = try TextInput.init(std.testing.allocator);
     defer ti.deinit();
     try ti.setValue("hi");
     ti.cursor = 0;
@@ -249,7 +255,7 @@ test "view writes value into renderer" {
 }
 
 test "view marks cursor cell with reverse" {
-    var ti = TextInput.init(std.testing.allocator);
+    var ti = try TextInput.init(std.testing.allocator);
     defer ti.deinit();
     try ti.setValue("hi");
     var r = try Renderer.init(std.testing.allocator, 1, 10);
@@ -259,7 +265,7 @@ test "view marks cursor cell with reverse" {
 }
 
 test "view scrolls horizontally to keep cursor visible" {
-    var ti = TextInput.init(std.testing.allocator);
+    var ti = try TextInput.init(std.testing.allocator);
     defer ti.deinit();
     try ti.setValue("abcdefghij");
     var r = try Renderer.init(std.testing.allocator, 1, 5);
@@ -270,7 +276,7 @@ test "view scrolls horizontally to keep cursor visible" {
 }
 
 test "view fills the rest with spaces when value is short" {
-    var ti = TextInput.init(std.testing.allocator);
+    var ti = try TextInput.init(std.testing.allocator);
     defer ti.deinit();
     try ti.setValue("a");
     var r = try Renderer.init(std.testing.allocator, 1, 5);

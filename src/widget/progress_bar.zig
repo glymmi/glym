@@ -1,7 +1,9 @@
 //! Simple horizontal progress bar widget.
 //!
 //! Displays a filled/empty bar based on a 0.0-1.0 progress value. An
-//! optional label is rendered to the left of the bar.
+//! optional label is rendered to the left of the bar. `label`,
+//! `fill_char` and `empty_char` are intentionally public so apps can
+//! tweak them inline; use `setProgress` to keep the value clamped.
 
 const std = @import("std");
 const Renderer = @import("../renderer.zig").Renderer;

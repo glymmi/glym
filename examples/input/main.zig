@@ -11,7 +11,7 @@ const App = union(enum) {};
 const P = glym.Program(Model, App);
 
 fn init(allocator: std.mem.Allocator) anyerror!Model {
-    return .{ .input = glym.widget.TextInput.init(allocator) };
+    return .{ .input = try glym.widget.TextInput.init(allocator) };
 }
 
 fn deinit(model: *Model, _: std.mem.Allocator) void {

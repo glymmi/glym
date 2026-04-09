@@ -1,7 +1,9 @@
 //! Vertical selection list widget.
 //!
 //! Displays a scrollable list of text items with keyboard navigation.
-//! The selected item is rendered with the reverse attribute set.
+//! The selected item is rendered with the reverse attribute set. The
+//! `view` function mutates `offset` to keep the selection visible, so
+//! it takes a `*List`, not a `*const List`.
 
 const std = @import("std");
 const input = @import("../term/input.zig");
@@ -45,8 +47,10 @@ pub const List = struct {
     }
 
     /// Apply a key event to the widget. Returns true if the key was
-    /// consumed, false if the host app should handle it.
-    pub fn handleKey(self: *List, key: input.Key) bool {
+    /// consumed, false if the host app should handle it. Returns an
+    /// error union for signature symmetry with the other widgets, but
+    /// the list itself never allocates and never fails.
+    pub fn handleKey(self: *List, key: input.Key) !bool {
         if (self.items.len == 0) return false;
         switch (key.code) {
             .arrow_up => {
@@ -128,7 +132,7 @@ test "init starts at index 0" {
 test "arrow down advances selection" {
     const items = [_][]const u8{ "a", "b", "c" };
     var l = List.init(&items);
-    try std.testing.expect(l.handleKey(.{ .code = .arrow_down }));
+    try std.testing.expect(try l.handleKey(.{ .code = .arrow_down }));
     try std.testing.expectEqual(@as(usize, 1), l.selected);
 }
 
@@ -136,7 +140,7 @@ test "arrow down stops at last item" {
     const items = [_][]const u8{ "a", "b" };
     var l = List.init(&items);
     l.selected = 1;
-    _ = l.handleKey(.{ .code = .arrow_down });
+    _ = try l.handleKey(.{ .code = .arrow_down });
     try std.testing.expectEqual(@as(usize, 1), l.selected);
 }
 
@@ -144,14 +148,14 @@ test "arrow up decrements selection" {
     const items = [_][]const u8{ "a", "b", "c" };
     var l = List.init(&items);
     l.selected = 2;
-    try std.testing.expect(l.handleKey(.{ .code = .arrow_up }));
+    try std.testing.expect(try l.handleKey(.{ .code = .arrow_up }));
     try std.testing.expectEqual(@as(usize, 1), l.selected);
 }
 
 test "arrow up stops at first item" {
     const items = [_][]const u8{ "a", "b" };
     var l = List.init(&items);
-    _ = l.handleKey(.{ .code = .arrow_up });
+    _ = try l.handleKey(.{ .code = .arrow_up });
     try std.testing.expectEqual(@as(usize, 0), l.selected);
 }
 
@@ -159,28 +163,28 @@ test "home jumps to first item" {
     const items = [_][]const u8{ "a", "b", "c" };
     var l = List.init(&items);
     l.selected = 2;
-    try std.testing.expect(l.handleKey(.{ .code = .home }));
+    try std.testing.expect(try l.handleKey(.{ .code = .home }));
     try std.testing.expectEqual(@as(usize, 0), l.selected);
 }
 
 test "end jumps to last item" {
     const items = [_][]const u8{ "a", "b", "c" };
     var l = List.init(&items);
-    try std.testing.expect(l.handleKey(.{ .code = .end }));
+    try std.testing.expect(try l.handleKey(.{ .code = .end }));
     try std.testing.expectEqual(@as(usize, 2), l.selected);
 }
 
 test "unhandled key returns false" {
     const items = [_][]const u8{"a"};
     var l = List.init(&items);
-    try std.testing.expect(!l.handleKey(.{ .code = .{ .f = 5 } }));
+    try std.testing.expect(!try l.handleKey(.{ .code = .{ .f = 5 } }));
 }
 
 test "empty list ignores all keys" {
     const items = [_][]const u8{};
     var l = List.init(&items);
-    try std.testing.expect(!l.handleKey(.{ .code = .arrow_down }));
-    try std.testing.expect(!l.handleKey(.{ .code = .arrow_up }));
+    try std.testing.expect(!try l.handleKey(.{ .code = .arrow_down }));
+    try std.testing.expect(!try l.handleKey(.{ .code = .arrow_up }));
 }
 
 test "selectedItem returns current item" {

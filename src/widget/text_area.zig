@@ -2,7 +2,9 @@
 //!
 //! Stores content as a list of lines, each a buffer of unicode codepoints.
 //! Supports vertical cursor movement, enter to split lines, and vertical
-//! scroll to keep the cursor visible within a fixed-height viewport.
+//! scroll to keep the cursor visible within a fixed-height viewport. The
+//! `view` function mutates `scroll` and `scroll_col` to follow the
+//! cursor, so it takes a `*TextArea`, not a `*const TextArea`.
 
 const std = @import("std");
 const input = @import("../term/input.zig");
