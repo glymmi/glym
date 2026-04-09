@@ -1,25 +1,22 @@
 //! Styling primitives for glym.
 //!
-//! Re-exports the color types, the `Style` struct, and an opinionated
-//! starter `palette` of named RGB constants. Apps that want a fully
-//! custom look can ignore the palette and build their own.
+//! Re-exports from `shimmer` so glym apps can write
+//! `glym.style.Style{ .bold = true }` without depending on shimmer
+//! directly. The Catppuccin Mocha `palette` is glym-specific and
+//! lives in `style/palette.zig`.
 
 const std = @import("std");
+const shimmer = @import("shimmer");
 
-pub const color = @import("style/color.zig");
-const style_mod = @import("style/style.zig");
+pub const color = shimmer.color;
 pub const palette = @import("style/palette.zig");
-const border_mod = @import("style/border.zig");
 
-pub const Color = color.Color;
-pub const Rgb = color.Rgb;
-pub const Style = style_mod.Style;
-pub const Border = border_mod.Border;
+pub const Color = shimmer.Color;
+pub const Rgb = shimmer.Rgb;
+pub const ColorLevel = shimmer.ColorLevel;
+pub const Style = shimmer.Style;
+pub const Border = shimmer.Border;
 
 test {
     std.testing.refAllDecls(@This());
-    _ = color;
-    _ = style_mod;
-    _ = palette;
-    _ = border_mod;
 }

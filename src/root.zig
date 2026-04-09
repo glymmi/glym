@@ -15,7 +15,7 @@ pub const msg = @import("msg.zig");
 pub const cmd = @import("cmd.zig");
 pub const program = @import("program.zig");
 pub const Program = program.Program;
-pub const ColorLevel = @import("style/color.zig").ColorLevel;
+pub const ColorLevel = @import("shimmer").ColorLevel;
 pub const detectColorLevel = program.detectColorLevel;
 pub const widget = @import("widget.zig");
 

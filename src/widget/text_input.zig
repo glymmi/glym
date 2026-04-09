@@ -13,7 +13,7 @@
 const std = @import("std");
 const input = @import("../term/input.zig");
 const Renderer = @import("../renderer.zig").Renderer;
-const Style = @import("../style/style.zig").Style;
+const Style = @import("shimmer").Style;
 
 pub const TextInput = struct {
     allocator: std.mem.Allocator,

@@ -3,7 +3,11 @@
     .version = "0.0.1",
     .fingerprint = 0xb86fdb858bc6fad,
     .minimum_zig_version = "0.15.0",
-    .dependencies = .{},
+    .dependencies = .{
+        .shimmer = .{
+            .path = "../shimmer",
+        },
+    },
     .paths = .{
         "build.zig",
         "build.zig.zon",

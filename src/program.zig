@@ -14,7 +14,7 @@ const raw = @import("term/raw.zig");
 const term_size = @import("term/size.zig");
 const input = @import("term/input.zig");
 const color_level_mod = @import("term/color_level.zig");
-const color_mod = @import("style/color.zig");
+const shimmer = @import("shimmer");
 const renderer_mod = @import("renderer.zig");
 const msg_mod = @import("msg.zig");
 const cmd_mod = @import("cmd.zig");
@@ -26,7 +26,7 @@ pub fn Program(comptime Model: type, comptime AppMsg: type) type {
         pub const Msg = msg_mod.Msg(AppMsg);
         pub const Cmd = cmd_mod.Cmd(AppMsg);
         pub const Renderer = renderer_mod.Renderer;
-        pub const ColorLevel = color_mod.ColorLevel;
+        pub const ColorLevel = shimmer.ColorLevel;
         pub const StepResult = enum { keep_running, quit };
 
         pub const InitFn = *const fn (std.mem.Allocator) anyerror!Model;
@@ -290,7 +290,7 @@ pub fn Program(comptime Model: type, comptime AppMsg: type) type {
 /// Reads `TERM` and `COLORTERM` and checks whether `stdout_handle` is a
 /// TTY. Safe to call before constructing a `Program` so apps can pick
 /// alternate palettes when running on a limited terminal.
-pub fn detectColorLevel(stdout_handle: raw.Handle) color_mod.ColorLevel {
+pub fn detectColorLevel(stdout_handle: raw.Handle) shimmer.ColorLevel {
     const is_tty = if (builtin.os.tag == .windows)
         true
     else

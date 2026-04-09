@@ -8,7 +8,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
-const ColorLevel = @import("../style/color.zig").ColorLevel;
+const ColorLevel = @import("shimmer").ColorLevel;
 
 /// Classify the terminal from raw inputs. Exposed as a pure function so
 /// tests can drive every branch without a real terminal.

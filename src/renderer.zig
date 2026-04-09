@@ -6,12 +6,12 @@
 //! terminal match the back buffer. Styling support lands later.
 
 const std = @import("std");
-const Style = @import("style/style.zig").Style;
-const color = @import("style/color.zig");
-const Rgb = color.Rgb;
-const ColorLevel = color.ColorLevel;
-const border_mod = @import("style/border.zig");
-const Border = border_mod.Border;
+const shimmer = @import("shimmer");
+const Style = shimmer.Style;
+const color = shimmer.color;
+const Rgb = shimmer.Rgb;
+const ColorLevel = shimmer.ColorLevel;
+const Border = shimmer.Border;
 
 pub const Cell = struct {
     char: u21 = ' ',

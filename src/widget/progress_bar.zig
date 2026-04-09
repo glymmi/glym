@@ -7,7 +7,7 @@
 
 const std = @import("std");
 const Renderer = @import("../renderer.zig").Renderer;
-const Style = @import("../style/style.zig").Style;
+const Style = @import("shimmer").Style;
 
 pub const ProgressBar = struct {
     progress: f32,

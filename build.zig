@@ -4,12 +4,19 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    const shimmer_dep = b.dependency("shimmer", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const shimmer_mod = shimmer_dep.module("shimmer");
+
     const glym_mod = b.addModule("glym", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
         .link_libc = true,
     });
+    glym_mod.addImport("shimmer", shimmer_mod);
 
     const lib = b.addLibrary(.{
         .name = "glym",

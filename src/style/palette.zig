@@ -6,7 +6,7 @@
 //! ramp. Apps that want a fully custom look can ignore the palette and
 //! build their own. License: MIT, see https://github.com/catppuccin.
 
-const Rgb = @import("color.zig").Rgb;
+const Rgb = @import("shimmer").Rgb;
 
 // -- accents --
 pub const rosewater: Rgb = .{ .r = 0xf5, .g = 0xe0, .b = 0xdc };
