@@ -9,7 +9,11 @@ const std = @import("std");
 pub const text_input = @import("widget/text_input.zig");
 pub const TextInput = text_input.TextInput;
 
+pub const list = @import("widget/list.zig");
+pub const List = list.List;
+
 test {
     std.testing.refAllDecls(@This());
     _ = text_input;
+    _ = list;
 }
