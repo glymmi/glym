@@ -10,6 +10,7 @@ pub const raw = @import("term/raw.zig");
 pub const size = @import("term/size.zig");
 pub const input = @import("term/input.zig");
 pub const renderer = @import("renderer.zig");
+pub const style = @import("style.zig");
 pub const msg = @import("msg.zig");
 pub const cmd = @import("cmd.zig");
 pub const program = @import("program.zig");
