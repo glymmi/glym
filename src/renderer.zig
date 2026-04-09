@@ -7,6 +7,8 @@
 
 const std = @import("std");
 const Style = @import("style/style.zig").Style;
+const color = @import("style/color.zig");
+const Rgb = color.Rgb;
 
 pub const Cell = struct {
     char: u21 = ' ',
@@ -80,6 +82,11 @@ pub const Renderer = struct {
     /// Stops at the right edge of the row. Wide characters are not yet
     /// handled.
     pub fn writeText(self: *Renderer, row: u16, col: u16, text: []const u8) void {
+        self.writeStyledText(row, col, text, .{});
+    }
+
+    /// Like `writeText` but applies the given style to every cell.
+    pub fn writeStyledText(self: *Renderer, row: u16, col: u16, text: []const u8, style: Style) void {
         if (row >= self.rows) return;
         var c = col;
         var i: usize = 0;
@@ -88,9 +95,53 @@ pub const Renderer = struct {
             const len = std.unicode.utf8ByteSequenceLength(text[i]) catch return;
             if (i + len > text.len) return;
             const cp = std.unicode.utf8Decode(text[i .. i + len]) catch return;
-            self.setCell(row, c, .{ .char = cp });
+            self.setCell(row, c, .{ .char = cp, .style = style });
             c += 1;
             i += len;
+        }
+    }
+
+    /// Write text with a horizontal RGB gradient from `start` to `end`. The
+    /// `base` style provides any non-color attributes (bold, italic, bg...).
+    /// Each codepoint gets an interpolated foreground color.
+    pub fn writeGradientText(
+        self: *Renderer,
+        row: u16,
+        col: u16,
+        text: []const u8,
+        start: Rgb,
+        end: Rgb,
+        base: Style,
+    ) void {
+        if (row >= self.rows) return;
+        var cp_count: usize = 0;
+        {
+            var i: usize = 0;
+            while (i < text.len) {
+                const len = std.unicode.utf8ByteSequenceLength(text[i]) catch return;
+                if (i + len > text.len) return;
+                i += len;
+                cp_count += 1;
+            }
+        }
+        if (cp_count == 0) return;
+        var c = col;
+        var i: usize = 0;
+        var idx: usize = 0;
+        while (i < text.len) {
+            if (c >= self.cols) break;
+            const len = std.unicode.utf8ByteSequenceLength(text[i]) catch return;
+            const cp = std.unicode.utf8Decode(text[i .. i + len]) catch return;
+            const t: f32 = if (cp_count == 1)
+                0
+            else
+                @as(f32, @floatFromInt(idx)) / @as(f32, @floatFromInt(cp_count - 1));
+            var s = base;
+            s.fg = .{ .rgb = color.lerpRgb(start, end, t) };
+            self.setCell(row, c, .{ .char = cp, .style = s });
+            c += 1;
+            i += len;
+            idx += 1;
         }
     }
 
@@ -213,6 +264,37 @@ test "flush emits style sequence when a styled cell changes" {
     const out = try r.flush();
     try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[0;1;31m") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "X") != null);
+}
+
+test "writeStyledText applies the given style to every cell" {
+    var r = try Renderer.init(std.testing.allocator, 1, 5);
+    defer r.deinit();
+    r.writeStyledText(0, 0, "hi", .{ .fg = .{ .indexed = 1 }, .bold = true });
+    try std.testing.expect(r.back[0].style.bold);
+    try std.testing.expectEqual(@as(u21, 'h'), r.back[0].char);
+    try std.testing.expectEqual(@as(u21, 'i'), r.back[1].char);
+    try std.testing.expect(r.back[1].style.bold);
+}
+
+test "writeGradientText interpolates fg across cells" {
+    var r = try Renderer.init(std.testing.allocator, 1, 5);
+    defer r.deinit();
+    const a: Rgb = .{ .r = 0, .g = 0, .b = 0 };
+    const b: Rgb = .{ .r = 200, .g = 0, .b = 0 };
+    r.writeGradientText(0, 0, "abc", a, b, .{});
+    try std.testing.expectEqual(@as(u8, 0), r.back[0].style.fg.rgb.r);
+    try std.testing.expectEqual(@as(u8, 100), r.back[1].style.fg.rgb.r);
+    try std.testing.expectEqual(@as(u8, 200), r.back[2].style.fg.rgb.r);
+}
+
+test "writeGradientText preserves base attributes" {
+    var r = try Renderer.init(std.testing.allocator, 1, 3);
+    defer r.deinit();
+    const a: Rgb = .{ .r = 0, .g = 0, .b = 0 };
+    const b: Rgb = .{ .r = 255, .g = 255, .b = 255 };
+    r.writeGradientText(0, 0, "ab", a, b, .{ .bold = true, .italic = true });
+    try std.testing.expect(r.back[0].style.bold);
+    try std.testing.expect(r.back[0].style.italic);
 }
 
 test "flush detects pure style change without char change" {
