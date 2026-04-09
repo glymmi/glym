@@ -26,20 +26,32 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_tests.step);
 
-    const counter_mod = b.createModule(.{
-        .root_source_file = b.path("examples/counter/main.zig"),
+    addExample(b, glym_mod, target, optimize, "counter", "examples/counter/main.zig");
+    addExample(b, glym_mod, target, optimize, "input", "examples/input/main.zig");
+}
+
+fn addExample(
+    b: *std.Build,
+    glym_mod: *std.Build.Module,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    comptime name: []const u8,
+    comptime root: []const u8,
+) void {
+    const mod = b.createModule(.{
+        .root_source_file = b.path(root),
         .target = target,
         .optimize = optimize,
     });
-    counter_mod.addImport("glym", glym_mod);
+    mod.addImport("glym", glym_mod);
 
-    const counter = b.addExecutable(.{
-        .name = "counter",
-        .root_module = counter_mod,
+    const exe = b.addExecutable(.{
+        .name = name,
+        .root_module = mod,
     });
-    b.installArtifact(counter);
+    b.installArtifact(exe);
 
-    const run_counter = b.addRunArtifact(counter);
-    const run_counter_step = b.step("run-counter", "Run the counter example");
-    run_counter_step.dependOn(&run_counter.step);
+    const run = b.addRunArtifact(exe);
+    const step = b.step("run-" ++ name, "Run the " ++ name ++ " example");
+    step.dependOn(&run.step);
 }
