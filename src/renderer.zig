@@ -243,8 +243,11 @@ pub const Renderer = struct {
     }
 
     /// Draw a filled bordered box: paint the interior with `fill`, then
-    /// the border on top with `border_style`. A common building block
-    /// for panels, modals, and tooltips.
+    /// the border on top with `border_style`. The fill is contained
+    /// inside the frame: the border row and column themselves keep
+    /// whatever sits behind them, so the panel's background stops
+    /// exactly at the border line. A common building block for panels,
+    /// modals, and tooltips.
     pub fn drawBox(
         self: *Renderer,
         row: u16,
@@ -256,7 +259,13 @@ pub const Renderer = struct {
         fill: Style,
     ) void {
         if (height == 0 or width == 0) return;
-        self.fillRect(row, col, height, width, .{ .char = ' ', .style = fill });
+        if (height >= 2 and width >= 2) {
+            self.fillRect(row + 1, col + 1, height - 2, width - 2, .{ .char = ' ', .style = fill });
+        } else {
+            // Degenerate rect with no room for an interior: just fill
+            // the whole thing so something is visible.
+            self.fillRect(row, col, height, width, .{ .char = ' ', .style = fill });
+        }
         self.drawBorder(row, col, height, width, border, border_style);
     }
 
@@ -537,4 +546,17 @@ test "drawBox fills the interior and frames it" {
     try std.testing.expect(Style.eql(r.back[4].style, fill));
     // Border corners overwrite the fill char.
     try std.testing.expectEqual(@as(u21, 0x250C), r.back[0].char);
+}
+
+test "drawBox keeps the fill out of the border row and column" {
+    var r = try Renderer.init(std.testing.allocator, 3, 3);
+    defer r.deinit();
+    const fill: Style = .{ .bg = .{ .indexed = 4 } };
+    r.drawBox(0, 0, 3, 3, Border.sharp, .{}, fill);
+    // Border cells must NOT carry the fill background.
+    try std.testing.expect(!std.meta.eql(r.back[0].style.bg, fill.bg)); // top-left
+    try std.testing.expect(!std.meta.eql(r.back[2].style.bg, fill.bg)); // top-right
+    try std.testing.expect(!std.meta.eql(r.back[6].style.bg, fill.bg)); // bottom-left
+    try std.testing.expect(!std.meta.eql(r.back[1].style.bg, fill.bg)); // top edge
+    try std.testing.expect(!std.meta.eql(r.back[3].style.bg, fill.bg)); // left edge
 }
