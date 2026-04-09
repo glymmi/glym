@@ -8,7 +8,34 @@
 
 const std = @import("std");
 
-pub const Rgb = struct { r: u8, g: u8, b: u8 };
+pub const Rgb = struct {
+    r: u8,
+    g: u8,
+    b: u8,
+
+    /// Parse a `#rrggbb` or `rrggbb` hex string into an `Rgb`. Returns
+    /// `error.InvalidHex` on length or digit problems.
+    pub fn fromHex(hex: []const u8) !Rgb {
+        var s = hex;
+        if (s.len > 0 and s[0] == '#') s = s[1..];
+        if (s.len != 6) return error.InvalidHex;
+        return .{
+            .r = std.fmt.parseInt(u8, s[0..2], 16) catch return error.InvalidHex,
+            .g = std.fmt.parseInt(u8, s[2..4], 16) catch return error.InvalidHex,
+            .b = std.fmt.parseInt(u8, s[4..6], 16) catch return error.InvalidHex,
+        };
+    }
+
+    /// Move the color toward black by `amount` (0..1).
+    pub fn darken(self: Rgb, amount: f32) Rgb {
+        return lerpRgb(self, .{ .r = 0, .g = 0, .b = 0 }, amount);
+    }
+
+    /// Move the color toward white by `amount` (0..1).
+    pub fn lighten(self: Rgb, amount: f32) Rgb {
+        return lerpRgb(self, .{ .r = 255, .g = 255, .b = 255 }, amount);
+    }
+};
 
 pub const Color = union(enum) {
     default,
@@ -171,4 +198,41 @@ test "lerpRgb clamps t above 1" {
     const a: Rgb = .{ .r = 10, .g = 20, .b = 30 };
     const b: Rgb = .{ .r = 200, .g = 200, .b = 200 };
     try std.testing.expectEqual(b, lerpRgb(a, b, 2.0));
+}
+
+test "Rgb.fromHex parses with hash" {
+    const c = try Rgb.fromHex("#ff6b9d");
+    try std.testing.expectEqual(@as(u8, 0xff), c.r);
+    try std.testing.expectEqual(@as(u8, 0x6b), c.g);
+    try std.testing.expectEqual(@as(u8, 0x9d), c.b);
+}
+
+test "Rgb.fromHex parses without hash" {
+    const c = try Rgb.fromHex("00ff80");
+    try std.testing.expectEqual(@as(u8, 0), c.r);
+    try std.testing.expectEqual(@as(u8, 255), c.g);
+    try std.testing.expectEqual(@as(u8, 128), c.b);
+}
+
+test "Rgb.fromHex rejects bad length" {
+    try std.testing.expectError(error.InvalidHex, Rgb.fromHex("#fff"));
+}
+
+test "Rgb.fromHex rejects non-hex digits" {
+    try std.testing.expectError(error.InvalidHex, Rgb.fromHex("#zzzzzz"));
+}
+
+test "Rgb.darken at 0 returns the same color" {
+    const c: Rgb = .{ .r = 100, .g = 150, .b = 200 };
+    try std.testing.expectEqual(c, c.darken(0));
+}
+
+test "Rgb.darken at 1 returns black" {
+    const c: Rgb = .{ .r = 100, .g = 150, .b = 200 };
+    try std.testing.expectEqual(Rgb{ .r = 0, .g = 0, .b = 0 }, c.darken(1));
+}
+
+test "Rgb.lighten at 1 returns white" {
+    const c: Rgb = .{ .r = 100, .g = 150, .b = 200 };
+    try std.testing.expectEqual(Rgb{ .r = 255, .g = 255, .b = 255 }, c.lighten(1));
 }

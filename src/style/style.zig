@@ -14,14 +14,33 @@ pub const Style = struct {
     fg: Color = .default,
     bg: Color = .default,
     bold: bool = false,
+    dim: bool = false,
     italic: bool = false,
     underline: bool = false,
     reverse: bool = false,
+    strikethrough: bool = false,
 
     pub const default: Style = .{};
 
     pub fn eql(a: Style, b: Style) bool {
         return std.meta.eql(a, b);
+    }
+
+    /// Compose two styles. Colors from `override` win when they are not
+    /// `.default`; text attributes are OR-ed together so additive
+    /// emphasis (a base + an accent) does the obvious thing. To turn an
+    /// attribute off, build a fresh `Style` instead of merging.
+    pub fn merge(base: Style, override: Style) Style {
+        var out = base;
+        if (!std.meta.eql(override.fg, Color{ .default = {} })) out.fg = override.fg;
+        if (!std.meta.eql(override.bg, Color{ .default = {} })) out.bg = override.bg;
+        out.bold = base.bold or override.bold;
+        out.dim = base.dim or override.dim;
+        out.italic = base.italic or override.italic;
+        out.underline = base.underline or override.underline;
+        out.reverse = base.reverse or override.reverse;
+        out.strikethrough = base.strikethrough or override.strikethrough;
+        return out;
     }
 
     /// Write a single combined SGR sequence for this style into `buf` and
@@ -32,9 +51,11 @@ pub const Style = struct {
         var n: usize = 0;
         n += (try std.fmt.bufPrint(buf[n..], "\x1b[0", .{})).len;
         if (self.bold) n += (try std.fmt.bufPrint(buf[n..], ";1", .{})).len;
+        if (self.dim) n += (try std.fmt.bufPrint(buf[n..], ";2", .{})).len;
         if (self.italic) n += (try std.fmt.bufPrint(buf[n..], ";3", .{})).len;
         if (self.underline) n += (try std.fmt.bufPrint(buf[n..], ";4", .{})).len;
         if (self.reverse) n += (try std.fmt.bufPrint(buf[n..], ";7", .{})).len;
+        if (self.strikethrough) n += (try std.fmt.bufPrint(buf[n..], ";9", .{})).len;
         switch (self.fg) {
             .default => {},
             .indexed => |k| {
@@ -125,6 +146,40 @@ test "eql distinguishes different styles" {
     const a: Style = .{ .bold = true };
     const b: Style = .{ .italic = true };
     try std.testing.expect(!Style.eql(a, b));
+}
+
+test "dim emits SGR 2" {
+    var buf: [64]u8 = undefined;
+    const s = try (Style{ .dim = true }).sequence(&buf);
+    try std.testing.expectEqualStrings("\x1b[0;2m", s);
+}
+
+test "strikethrough emits SGR 9" {
+    var buf: [64]u8 = undefined;
+    const s = try (Style{ .strikethrough = true }).sequence(&buf);
+    try std.testing.expectEqualStrings("\x1b[0;9m", s);
+}
+
+test "merge keeps base color when override is default" {
+    const base: Style = .{ .fg = .{ .indexed = 5 }, .bold = true };
+    const out = Style.merge(base, .{ .italic = true });
+    try std.testing.expectEqual(@as(u8, 5), out.fg.indexed);
+    try std.testing.expect(out.bold);
+    try std.testing.expect(out.italic);
+}
+
+test "merge override color wins" {
+    const base: Style = .{ .fg = .{ .indexed = 5 } };
+    const out = Style.merge(base, .{ .fg = .{ .indexed = 10 } });
+    try std.testing.expectEqual(@as(u8, 10), out.fg.indexed);
+}
+
+test "merge OR-s text attributes" {
+    const a: Style = .{ .bold = true };
+    const b: Style = .{ .underline = true };
+    const out = Style.merge(a, b);
+    try std.testing.expect(out.bold);
+    try std.testing.expect(out.underline);
 }
 
 test "eql distinguishes different colors" {
