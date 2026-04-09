@@ -12,6 +12,8 @@ pub const input = @import("term/input.zig");
 pub const renderer = @import("renderer.zig");
 pub const msg = @import("msg.zig");
 pub const cmd = @import("cmd.zig");
+pub const program = @import("program.zig");
+pub const Program = program.Program;
 
 pub const version = "0.0.1";
 
