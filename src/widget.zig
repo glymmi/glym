@@ -15,9 +15,13 @@ pub const List = list.List;
 pub const text_area = @import("widget/text_area.zig");
 pub const TextArea = text_area.TextArea;
 
+pub const progress_bar = @import("widget/progress_bar.zig");
+pub const ProgressBar = progress_bar.ProgressBar;
+
 test {
     std.testing.refAllDecls(@This());
     _ = text_input;
     _ = list;
     _ = text_area;
+    _ = progress_bar;
 }
