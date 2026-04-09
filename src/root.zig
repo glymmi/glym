@@ -8,6 +8,7 @@ const std = @import("std");
 pub const ansi = @import("term/ansi.zig");
 pub const raw = @import("term/raw.zig");
 pub const size = @import("term/size.zig");
+pub const input = @import("term/input.zig");
 
 pub const version = "0.0.1";
 
