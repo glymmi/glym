@@ -5,7 +5,8 @@
     .minimum_zig_version = "0.15.0",
     .dependencies = .{
         .shimmer = .{
-            .path = "../shimmer",
+            .url = "git+https://github.com/glymmi/shimmer#4a9e0ae63e9ccb918b57ecef75c4e9dccef69356",
+            .hash = "shimmer-0.0.1-7kSARSFNAgBTq02vNsIlJZeJon5nL7xPszh71C2yTq1d",
         },
     },
     .paths = .{
