@@ -1,9 +1,9 @@
 //! Terminal input parser.
 //!
 //! Decodes raw bytes coming from a terminal into structured Key events.
-//! This file currently handles ASCII, ctrl+letter, the basic control keys
-//! (enter, tab, backspace, escape) and UTF-8 codepoints. Special keys,
-//! modifiers and mouse events land in later commits.
+//! Handles ASCII, ctrl+letter, basic control keys, UTF-8 codepoints and the
+//! common CSI/SS3 escape sequences for arrow keys, navigation keys and F1
+//! through F12. Modifier-aware sequences and mouse events land later.
 
 const std = @import("std");
 
@@ -19,6 +19,17 @@ pub const KeyCode = union(enum) {
     tab,
     backspace,
     escape,
+    arrow_up,
+    arrow_down,
+    arrow_left,
+    arrow_right,
+    home,
+    end,
+    page_up,
+    page_down,
+    insert,
+    delete,
+    f: u8,
 };
 
 pub const Key = struct {
@@ -31,18 +42,20 @@ pub const ParseResult = struct {
     consumed: usize,
 };
 
-/// Parse the next key from a byte slice. Returns null when the slice is
-/// empty, when more bytes are needed to complete a UTF-8 codepoint, or when
-/// the input is invalid.
+/// Parse the next key from a byte slice. Returns null when more bytes are
+/// needed to complete the current sequence. Unknown or malformed escape
+/// sequences yield a lone escape and consume only the ESC byte so the
+/// caller can resync on the next call.
 pub fn parse(bytes: []const u8) ?ParseResult {
     if (bytes.len == 0) return null;
     const b = bytes[0];
+
+    if (b == 0x1b) return parseEscape(bytes);
 
     switch (b) {
         '\r', '\n' => return .{ .key = .{ .code = .enter }, .consumed = 1 },
         '\t' => return .{ .key = .{ .code = .tab }, .consumed = 1 },
         0x7f, 0x08 => return .{ .key = .{ .code = .backspace }, .consumed = 1 },
-        0x1b => return .{ .key = .{ .code = .escape }, .consumed = 1 },
         else => {},
     }
 
@@ -62,6 +75,83 @@ pub fn parse(bytes: []const u8) ?ParseResult {
     if (bytes.len < len) return null;
     const cp = std.unicode.utf8Decode(bytes[0..len]) catch return null;
     return .{ .key = .{ .code = .{ .char = cp } }, .consumed = len };
+}
+
+fn parseEscape(bytes: []const u8) ?ParseResult {
+    if (bytes.len == 1) return .{ .key = .{ .code = .escape }, .consumed = 1 };
+    return switch (bytes[1]) {
+        '[' => parseCsi(bytes),
+        'O' => parseSs3(bytes),
+        else => .{ .key = .{ .code = .escape }, .consumed = 1 },
+    };
+}
+
+fn parseCsi(bytes: []const u8) ?ParseResult {
+    if (bytes.len < 3) return null;
+    const third = bytes[2];
+
+    switch (third) {
+        'A' => return result(.arrow_up, 3),
+        'B' => return result(.arrow_down, 3),
+        'C' => return result(.arrow_right, 3),
+        'D' => return result(.arrow_left, 3),
+        'H' => return result(.home, 3),
+        'F' => return result(.end, 3),
+        else => {},
+    }
+
+    if (third < '0' or third > '9') return loneEscape();
+
+    var i: usize = 2;
+    while (i < bytes.len and bytes[i] >= '0' and bytes[i] <= '9') : (i += 1) {}
+    if (i >= bytes.len) return null;
+    if (bytes[i] != '~') return loneEscape();
+
+    const num = std.fmt.parseInt(u32, bytes[2..i], 10) catch return loneEscape();
+    const code: KeyCode = switch (num) {
+        1, 7 => .home,
+        2 => .insert,
+        3 => .delete,
+        4, 8 => .end,
+        5 => .page_up,
+        6 => .page_down,
+        15 => .{ .f = 5 },
+        17 => .{ .f = 6 },
+        18 => .{ .f = 7 },
+        19 => .{ .f = 8 },
+        20 => .{ .f = 9 },
+        21 => .{ .f = 10 },
+        23 => .{ .f = 11 },
+        24 => .{ .f = 12 },
+        else => return loneEscape(),
+    };
+    return .{ .key = .{ .code = code }, .consumed = i + 1 };
+}
+
+fn parseSs3(bytes: []const u8) ?ParseResult {
+    if (bytes.len < 3) return null;
+    const code: KeyCode = switch (bytes[2]) {
+        'P' => .{ .f = 1 },
+        'Q' => .{ .f = 2 },
+        'R' => .{ .f = 3 },
+        'S' => .{ .f = 4 },
+        'H' => .home,
+        'F' => .end,
+        'A' => .arrow_up,
+        'B' => .arrow_down,
+        'C' => .arrow_right,
+        'D' => .arrow_left,
+        else => return loneEscape(),
+    };
+    return .{ .key = .{ .code = code }, .consumed = 3 };
+}
+
+fn result(code: KeyCode, consumed: usize) ParseResult {
+    return .{ .key = .{ .code = code }, .consumed = consumed };
+}
+
+fn loneEscape() ParseResult {
+    return .{ .key = .{ .code = .escape }, .consumed = 1 };
 }
 
 test "empty input returns null" {
@@ -148,4 +238,95 @@ test "consumed only counts the parsed key" {
     const r = parse("ab").?;
     try std.testing.expectEqual(@as(usize, 1), r.consumed);
     try std.testing.expectEqual(@as(u21, 'a'), r.key.code.char);
+}
+
+test "csi arrow up" {
+    const r = parse("\x1b[A").?;
+    try std.testing.expectEqual(KeyCode.arrow_up, r.key.code);
+    try std.testing.expectEqual(@as(usize, 3), r.consumed);
+}
+
+test "csi arrow down" {
+    const r = parse("\x1b[B").?;
+    try std.testing.expectEqual(KeyCode.arrow_down, r.key.code);
+}
+
+test "csi arrow right" {
+    const r = parse("\x1b[C").?;
+    try std.testing.expectEqual(KeyCode.arrow_right, r.key.code);
+}
+
+test "csi arrow left" {
+    const r = parse("\x1b[D").?;
+    try std.testing.expectEqual(KeyCode.arrow_left, r.key.code);
+}
+
+test "csi home and end" {
+    try std.testing.expectEqual(KeyCode.home, parse("\x1b[H").?.key.code);
+    try std.testing.expectEqual(KeyCode.end, parse("\x1b[F").?.key.code);
+}
+
+test "csi insert delete page" {
+    try std.testing.expectEqual(KeyCode.insert, parse("\x1b[2~").?.key.code);
+    try std.testing.expectEqual(KeyCode.delete, parse("\x1b[3~").?.key.code);
+    try std.testing.expectEqual(KeyCode.page_up, parse("\x1b[5~").?.key.code);
+    try std.testing.expectEqual(KeyCode.page_down, parse("\x1b[6~").?.key.code);
+}
+
+test "csi numeric home and end variants" {
+    try std.testing.expectEqual(KeyCode.home, parse("\x1b[1~").?.key.code);
+    try std.testing.expectEqual(KeyCode.home, parse("\x1b[7~").?.key.code);
+    try std.testing.expectEqual(KeyCode.end, parse("\x1b[4~").?.key.code);
+    try std.testing.expectEqual(KeyCode.end, parse("\x1b[8~").?.key.code);
+}
+
+test "csi function keys f5 to f12" {
+    try std.testing.expectEqual(@as(u8, 5), parse("\x1b[15~").?.key.code.f);
+    try std.testing.expectEqual(@as(u8, 6), parse("\x1b[17~").?.key.code.f);
+    try std.testing.expectEqual(@as(u8, 7), parse("\x1b[18~").?.key.code.f);
+    try std.testing.expectEqual(@as(u8, 8), parse("\x1b[19~").?.key.code.f);
+    try std.testing.expectEqual(@as(u8, 9), parse("\x1b[20~").?.key.code.f);
+    try std.testing.expectEqual(@as(u8, 10), parse("\x1b[21~").?.key.code.f);
+    try std.testing.expectEqual(@as(u8, 11), parse("\x1b[23~").?.key.code.f);
+    try std.testing.expectEqual(@as(u8, 12), parse("\x1b[24~").?.key.code.f);
+}
+
+test "ss3 function keys f1 to f4" {
+    try std.testing.expectEqual(@as(u8, 1), parse("\x1bOP").?.key.code.f);
+    try std.testing.expectEqual(@as(u8, 2), parse("\x1bOQ").?.key.code.f);
+    try std.testing.expectEqual(@as(u8, 3), parse("\x1bOR").?.key.code.f);
+    try std.testing.expectEqual(@as(u8, 4), parse("\x1bOS").?.key.code.f);
+}
+
+test "ss3 arrow keys" {
+    try std.testing.expectEqual(KeyCode.arrow_up, parse("\x1bOA").?.key.code);
+    try std.testing.expectEqual(KeyCode.arrow_down, parse("\x1bOB").?.key.code);
+}
+
+test "incomplete csi returns null" {
+    try std.testing.expect(parse("\x1b[") == null);
+    try std.testing.expect(parse("\x1b[1") == null);
+    try std.testing.expect(parse("\x1b[15") == null);
+}
+
+test "incomplete ss3 returns null" {
+    try std.testing.expect(parse("\x1bO") == null);
+}
+
+test "unknown csi final yields lone escape" {
+    const r = parse("\x1b[Z").?;
+    try std.testing.expectEqual(KeyCode.escape, r.key.code);
+    try std.testing.expectEqual(@as(usize, 1), r.consumed);
+}
+
+test "unknown numeric csi yields lone escape" {
+    const r = parse("\x1b[99~").?;
+    try std.testing.expectEqual(KeyCode.escape, r.key.code);
+    try std.testing.expectEqual(@as(usize, 1), r.consumed);
+}
+
+test "esc followed by random byte yields lone escape" {
+    const r = parse("\x1bx").?;
+    try std.testing.expectEqual(KeyCode.escape, r.key.code);
+    try std.testing.expectEqual(@as(usize, 1), r.consumed);
 }
