@@ -6,9 +6,11 @@
 //! terminal match the back buffer. Styling support lands later.
 
 const std = @import("std");
+const Style = @import("style/style.zig").Style;
 
 pub const Cell = struct {
     char: u21 = ' ',
+    style: Style = .{},
 };
 
 pub const Renderer = struct {
@@ -98,21 +100,30 @@ pub const Renderer = struct {
     pub fn flush(self: *Renderer) ![]const u8 {
         self.out.clearRetainingCapacity();
         var move_buf: [32]u8 = undefined;
+        var style_buf: [64]u8 = undefined;
         var enc: [4]u8 = undefined;
+        var current_style: ?Style = null;
         var r: u16 = 0;
         while (r < self.rows) : (r += 1) {
             var c: u16 = 0;
             while (c < self.cols) : (c += 1) {
                 const idx = @as(usize, r) * self.cols + c;
-                if (self.back[idx].char == self.front[idx].char) continue;
+                const back = self.back[idx];
+                const front = self.front[idx];
+                if (back.char == front.char and Style.eql(back.style, front.style)) continue;
                 const move = try std.fmt.bufPrint(&move_buf, "\x1b[{d};{d}H", .{ r + 1, c + 1 });
                 try self.out.appendSlice(self.allocator, move);
-                const n = std.unicode.utf8Encode(self.back[idx].char, &enc) catch {
-                    self.front[idx] = self.back[idx];
+                if (current_style == null or !Style.eql(back.style, current_style.?)) {
+                    const seq = try back.style.sequence(&style_buf);
+                    try self.out.appendSlice(self.allocator, seq);
+                    current_style = back.style;
+                }
+                const n = std.unicode.utf8Encode(back.char, &enc) catch {
+                    self.front[idx] = back;
                     continue;
                 };
                 try self.out.appendSlice(self.allocator, enc[0..n]);
-                self.front[idx] = self.back[idx];
+                self.front[idx] = back;
             }
         }
         return self.out.items;
@@ -131,7 +142,8 @@ test "flush emits move and char for written cell" {
     defer r.deinit();
     r.setCell(1, 2, .{ .char = 'X' });
     const out = try r.flush();
-    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[2;3HX") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[2;3H") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "X") != null);
 }
 
 test "second flush is empty when nothing changed" {
@@ -149,7 +161,8 @@ test "second flush emits only the changed cell" {
     _ = try r.flush();
     r.setCell(0, 1, .{ .char = 'Z' });
     const out2 = try r.flush();
-    try std.testing.expect(std.mem.indexOf(u8, out2, "\x1b[1;2HZ") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out2, "\x1b[1;2H") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out2, "Z") != null);
     try std.testing.expect(std.mem.indexOf(u8, out2, "\x1b[1;1H") == null);
 }
 
@@ -192,6 +205,26 @@ test "clear resets back buffer to spaces" {
     try std.testing.expectEqual(@as(u21, ' '), r.back[0].char);
 }
 
+test "flush emits style sequence when a styled cell changes" {
+    var r = try Renderer.init(std.testing.allocator, 2, 2);
+    defer r.deinit();
+    _ = try r.flush();
+    r.setCell(0, 0, .{ .char = 'X', .style = .{ .fg = .{ .indexed = 1 }, .bold = true } });
+    const out = try r.flush();
+    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[0;1;31m") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "X") != null);
+}
+
+test "flush detects pure style change without char change" {
+    var r = try Renderer.init(std.testing.allocator, 1, 1);
+    defer r.deinit();
+    r.setCell(0, 0, .{ .char = 'A' });
+    _ = try r.flush();
+    r.setCell(0, 0, .{ .char = 'A', .style = .{ .fg = .{ .indexed = 2 } } });
+    const out = try r.flush();
+    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[0;32m") != null);
+}
+
 test "resize updates dimensions and forces full redraw" {
     var r = try Renderer.init(std.testing.allocator, 2, 2);
     defer r.deinit();
@@ -202,5 +235,6 @@ test "resize updates dimensions and forces full redraw" {
     try std.testing.expectEqual(@as(u16, 4), r.cols);
     r.setCell(2, 3, .{ .char = 'Z' });
     const out = try r.flush();
-    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[3;4HZ") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[3;4H") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "Z") != null);
 }
