@@ -12,10 +12,15 @@ const P = glym.Program(Model, App);
 
 fn init(allocator: std.mem.Allocator) anyerror!Model {
     var area = try glym.widget.TextArea.init(allocator);
+    errdefer area.deinit();
     try area.setValue("hello\nthis is a text area\ntype something");
     area.row = 0;
     area.col = 0;
     return .{ .area = area };
+}
+
+fn deinit(model: *Model, _: std.mem.Allocator) void {
+    model.area.deinit();
 }
 
 fn update(model: *Model, m: P.Msg) P.Cmd {
@@ -42,11 +47,15 @@ fn view(model: *Model, r: *P.Renderer) void {
 }
 
 pub fn main() !void {
+    var gpa: std.heap.GeneralPurposeAllocator(.{}) = .{};
+    defer _ = gpa.deinit();
+
     const program: P = .{
-        .allocator = std.heap.page_allocator,
+        .allocator = gpa.allocator(),
         .init_fn = init,
         .update_fn = update,
         .view_fn = view,
+        .deinit_fn = deinit,
     };
-    try program.run();
+    try program.runSafely();
 }

@@ -14,6 +14,10 @@ fn init(allocator: std.mem.Allocator) anyerror!Model {
     return .{ .input = glym.widget.TextInput.init(allocator) };
 }
 
+fn deinit(model: *Model, _: std.mem.Allocator) void {
+    model.input.deinit();
+}
+
 fn update(model: *Model, m: P.Msg) P.Cmd {
     switch (m) {
         .key => |k| {
@@ -41,11 +45,15 @@ fn view(model: *Model, r: *P.Renderer) void {
 }
 
 pub fn main() !void {
+    var gpa: std.heap.GeneralPurposeAllocator(.{}) = .{};
+    defer _ = gpa.deinit();
+
     const program: P = .{
-        .allocator = std.heap.page_allocator,
+        .allocator = gpa.allocator(),
         .init_fn = init,
         .update_fn = update,
         .view_fn = view,
+        .deinit_fn = deinit,
     };
-    try program.run();
+    try program.runSafely();
 }

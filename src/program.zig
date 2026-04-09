@@ -29,11 +29,15 @@ pub fn Program(comptime Model: type, comptime AppMsg: type) type {
         pub const InitFn = *const fn (std.mem.Allocator) anyerror!Model;
         pub const UpdateFn = *const fn (*Model, Msg) Cmd;
         pub const ViewFn = *const fn (*Model, *Renderer) void;
+        pub const DeinitFn = *const fn (*Model, std.mem.Allocator) void;
 
         allocator: std.mem.Allocator,
         init_fn: InitFn,
         update_fn: UpdateFn,
         view_fn: ViewFn,
+        /// Optional model cleanup. Called on every exit path from `run`.
+        /// Contract: init allocates, deinit frees, run handles the rest.
+        deinit_fn: ?DeinitFn = null,
 
         /// Run a single update + command pass on the given model. Exposed
         /// so tests can drive the runtime without a real terminal.
@@ -56,9 +60,9 @@ pub fn Program(comptime Model: type, comptime AppMsg: type) type {
             };
         }
 
-        /// Set the terminal up, drive the loop until quit, then restore the
-        /// terminal. Blocks the calling thread for the lifetime of the
-        /// program.
+        /// Set the terminal up, drive the loop until quit, then restore
+        /// the terminal. Every exit path, error or clean, leaves the alt
+        /// screen, restores the cursor and raw mode, and runs `deinit_fn`.
         pub fn run(self: Self) !void {
             const stdin_handle = stdinHandle();
             const stdout_handle = stdoutHandle();
@@ -67,10 +71,12 @@ pub fn Program(comptime Model: type, comptime AppMsg: type) type {
             defer raw_mode.disable() catch {};
 
             try writeAll(stdout_handle, ansi.enter_alt_screen);
-            try writeAll(stdout_handle, ansi.hide_cursor);
-            try writeAll(stdout_handle, ansi.clear_screen);
-            defer writeAll(stdout_handle, ansi.show_cursor) catch {};
             defer writeAll(stdout_handle, ansi.leave_alt_screen) catch {};
+
+            try writeAll(stdout_handle, ansi.hide_cursor);
+            defer writeAll(stdout_handle, ansi.show_cursor) catch {};
+
+            try writeAll(stdout_handle, ansi.clear_screen);
 
             const current_size = term_size.get(stdout_handle) catch term_size.Size{ .rows = 24, .cols = 80 };
 
@@ -78,6 +84,7 @@ pub fn Program(comptime Model: type, comptime AppMsg: type) type {
             defer renderer.deinit();
 
             var model = try self.init_fn(self.allocator);
+            defer if (self.deinit_fn) |df| df(&model, self.allocator);
 
             renderer.clear();
             self.view_fn(&model, &renderer);
@@ -120,6 +127,18 @@ pub fn Program(comptime Model: type, comptime AppMsg: type) type {
                 self.view_fn(&model, &renderer);
                 try writeAll(stdout_handle, try renderer.flush());
             }
+        }
+
+        /// Same as `run`, but on error writes the terminal restore
+        /// sequences one more time before propagating. A safety net for
+        /// users who would otherwise be left staring at a broken TTY.
+        pub fn runSafely(self: Self) !void {
+            self.run() catch |err| {
+                const stdout_handle = stdoutHandle();
+                writeAll(stdout_handle, ansi.show_cursor) catch {};
+                writeAll(stdout_handle, ansi.leave_alt_screen) catch {};
+                return err;
+            };
         }
     };
 }
