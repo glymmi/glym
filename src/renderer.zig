@@ -9,6 +9,7 @@ const std = @import("std");
 const Style = @import("style/style.zig").Style;
 const color = @import("style/color.zig");
 const Rgb = color.Rgb;
+const ColorLevel = color.ColorLevel;
 const border_mod = @import("style/border.zig");
 const Border = border_mod.Border;
 
@@ -24,6 +25,11 @@ pub const Renderer = struct {
     front: []Cell,
     back: []Cell,
     out: std.ArrayList(u8),
+    /// Color support level the terminal exposes. Set by `Program` at
+    /// startup (or left at the default `.truecolor` in tests). `flush`
+    /// passes it to every `Style.sequence` call so RGB colors get
+    /// downgraded on terminals that cannot show them.
+    color_level: ColorLevel = .truecolor,
 
     /// Allocate a renderer for a terminal of the given size. The back buffer
     /// starts blank and the front buffer is set to a sentinel so the first
@@ -262,7 +268,7 @@ pub const Renderer = struct {
                 const move = try std.fmt.bufPrint(&move_buf, "\x1b[{d};{d}H", .{ r + 1, c + 1 });
                 try self.out.appendSlice(self.allocator, move);
                 if (current_style == null or !Style.eql(back.style, current_style.?)) {
-                    const seq = try back.style.sequence(&style_buf);
+                    const seq = try back.style.sequence(&style_buf, self.color_level);
                     try self.out.appendSlice(self.allocator, seq);
                     current_style = back.style;
                 }

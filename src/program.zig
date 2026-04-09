@@ -13,6 +13,8 @@ const ansi = @import("term/ansi.zig");
 const raw = @import("term/raw.zig");
 const term_size = @import("term/size.zig");
 const input = @import("term/input.zig");
+const color_level_mod = @import("term/color_level.zig");
+const color_mod = @import("style/color.zig");
 const renderer_mod = @import("renderer.zig");
 const msg_mod = @import("msg.zig");
 const cmd_mod = @import("cmd.zig");
@@ -24,6 +26,7 @@ pub fn Program(comptime Model: type, comptime AppMsg: type) type {
         pub const Msg = msg_mod.Msg(AppMsg);
         pub const Cmd = cmd_mod.Cmd(AppMsg);
         pub const Renderer = renderer_mod.Renderer;
+        pub const ColorLevel = color_mod.ColorLevel;
         pub const StepResult = enum { keep_running, quit };
 
         pub const InitFn = *const fn (std.mem.Allocator) anyerror!Model;
@@ -38,6 +41,15 @@ pub fn Program(comptime Model: type, comptime AppMsg: type) type {
         /// Optional model cleanup. Called on every exit path from `run`.
         /// Contract: init allocates, deinit frees, run handles the rest.
         deinit_fn: ?DeinitFn = null,
+        /// Optional override for terminal color support. When null,
+        /// `run` detects the level from `TERM` / `COLORTERM` and the
+        /// stdout TTY check, then passes it to the renderer so RGB
+        /// colors get downgraded on terminals that cannot show them.
+        /// Apps that want to pick the level themselves (for example
+        /// from a CLI flag or for tests) can set this explicitly.
+        /// Apps that want to read the detected level can call
+        /// `glym.detectColorLevel` before constructing the program.
+        color_level: ?ColorLevel = null,
 
         /// Run a single update + command pass on the given model. Exposed
         /// so tests can drive the runtime without a real terminal. When
@@ -186,6 +198,7 @@ pub fn Program(comptime Model: type, comptime AppMsg: type) type {
 
             var renderer = try renderer_mod.Renderer.init(self.allocator, current_size.rows, current_size.cols);
             defer renderer.deinit();
+            renderer.color_level = self.color_level orelse detectColorLevel(stdout_handle);
 
             var model = try self.init_fn(self.allocator);
             defer if (self.deinit_fn) |df| df(&model, self.allocator);
@@ -271,6 +284,22 @@ pub fn Program(comptime Model: type, comptime AppMsg: type) type {
             };
         }
     };
+}
+
+/// Detect the terminal color support level for the current process.
+/// Reads `TERM` and `COLORTERM` and checks whether `stdout_handle` is a
+/// TTY. Safe to call before constructing a `Program` so apps can pick
+/// alternate palettes when running on a limited terminal.
+pub fn detectColorLevel(stdout_handle: raw.Handle) color_mod.ColorLevel {
+    const is_tty = if (builtin.os.tag == .windows)
+        true
+    else
+        std.posix.isatty(stdout_handle);
+    return color_level_mod.classify(
+        color_level_mod.readTerm(),
+        color_level_mod.readColorterm(),
+        is_tty,
+    );
 }
 
 // SIGWINCH self-pipe state. The signal handler can only call

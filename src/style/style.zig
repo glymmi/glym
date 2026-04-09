@@ -9,6 +9,7 @@ const color_mod = @import("color.zig");
 
 pub const Color = color_mod.Color;
 pub const Rgb = color_mod.Rgb;
+pub const ColorLevel = color_mod.ColorLevel;
 
 pub const Style = struct {
     fg: Color = .default,
@@ -46,8 +47,10 @@ pub const Style = struct {
     /// Write a single combined SGR sequence for this style into `buf` and
     /// return the slice that was filled. Always starts with a reset so the
     /// caller can rely on the previous terminal state being cleared.
+    /// Colors the terminal cannot display at `level` are downgraded to
+    /// the nearest supported entry before being written.
     /// `buf` should be at least 64 bytes to fit the worst case.
-    pub fn sequence(self: Style, buf: []u8) ![]u8 {
+    pub fn sequence(self: Style, buf: []u8, level: ColorLevel) ![]u8 {
         var n: usize = 0;
         n += (try std.fmt.bufPrint(buf[n..], "\x1b[0", .{})).len;
         if (self.bold) n += (try std.fmt.bufPrint(buf[n..], ";1", .{})).len;
@@ -56,7 +59,7 @@ pub const Style = struct {
         if (self.underline) n += (try std.fmt.bufPrint(buf[n..], ";4", .{})).len;
         if (self.reverse) n += (try std.fmt.bufPrint(buf[n..], ";7", .{})).len;
         if (self.strikethrough) n += (try std.fmt.bufPrint(buf[n..], ";9", .{})).len;
-        switch (self.fg) {
+        switch (self.fg.downgrade(level)) {
             .default => {},
             .indexed => |k| {
                 if (k < 8) {
@@ -69,7 +72,7 @@ pub const Style = struct {
             },
             .rgb => |c| n += (try std.fmt.bufPrint(buf[n..], ";38;2;{d};{d};{d}", .{ c.r, c.g, c.b })).len,
         }
-        switch (self.bg) {
+        switch (self.bg.downgrade(level)) {
             .default => {},
             .indexed => |k| {
                 if (k < 8) {
@@ -89,37 +92,37 @@ pub const Style = struct {
 
 test "default style sequence is reset" {
     var buf: [64]u8 = undefined;
-    const s = try Style.default.sequence(&buf);
+    const s = try Style.default.sequence(&buf, .truecolor);
     try std.testing.expectEqualStrings("\x1b[0m", s);
 }
 
 test "bold only" {
     var buf: [64]u8 = undefined;
-    const s = try (Style{ .bold = true }).sequence(&buf);
+    const s = try (Style{ .bold = true }).sequence(&buf, .truecolor);
     try std.testing.expectEqualStrings("\x1b[0;1m", s);
 }
 
 test "bold and italic" {
     var buf: [64]u8 = undefined;
-    const s = try (Style{ .bold = true, .italic = true }).sequence(&buf);
+    const s = try (Style{ .bold = true, .italic = true }).sequence(&buf, .truecolor);
     try std.testing.expectEqualStrings("\x1b[0;1;3m", s);
 }
 
 test "fg basic red" {
     var buf: [64]u8 = undefined;
-    const s = try (Style{ .fg = .{ .indexed = 1 } }).sequence(&buf);
+    const s = try (Style{ .fg = .{ .indexed = 1 } }).sequence(&buf, .truecolor);
     try std.testing.expectEqualStrings("\x1b[0;31m", s);
 }
 
 test "fg rgb red" {
     var buf: [64]u8 = undefined;
-    const s = try (Style{ .fg = .{ .rgb = .{ .r = 255, .g = 0, .b = 0 } } }).sequence(&buf);
+    const s = try (Style{ .fg = .{ .rgb = .{ .r = 255, .g = 0, .b = 0 } } }).sequence(&buf, .truecolor);
     try std.testing.expectEqualStrings("\x1b[0;38;2;255;0;0m", s);
 }
 
 test "bg basic blue" {
     var buf: [64]u8 = undefined;
-    const s = try (Style{ .bg = .{ .indexed = 4 } }).sequence(&buf);
+    const s = try (Style{ .bg = .{ .indexed = 4 } }).sequence(&buf, .truecolor);
     try std.testing.expectEqualStrings("\x1b[0;44m", s);
 }
 
@@ -132,7 +135,7 @@ test "all attributes combined" {
         .italic = true,
         .underline = true,
         .reverse = true,
-    }).sequence(&buf);
+    }).sequence(&buf, .truecolor);
     try std.testing.expectEqualStrings("\x1b[0;1;3;4;7;38;5;200;48;2;0;128;255m", s);
 }
 
@@ -150,13 +153,13 @@ test "eql distinguishes different styles" {
 
 test "dim emits SGR 2" {
     var buf: [64]u8 = undefined;
-    const s = try (Style{ .dim = true }).sequence(&buf);
+    const s = try (Style{ .dim = true }).sequence(&buf, .truecolor);
     try std.testing.expectEqualStrings("\x1b[0;2m", s);
 }
 
 test "strikethrough emits SGR 9" {
     var buf: [64]u8 = undefined;
-    const s = try (Style{ .strikethrough = true }).sequence(&buf);
+    const s = try (Style{ .strikethrough = true }).sequence(&buf, .truecolor);
     try std.testing.expectEqualStrings("\x1b[0;9m", s);
 }
 
@@ -180,6 +183,27 @@ test "merge OR-s text attributes" {
     const out = Style.merge(a, b);
     try std.testing.expect(out.bold);
     try std.testing.expect(out.underline);
+}
+
+test "sequence downgrades RGB to basic 16 on basic level" {
+    var buf: [64]u8 = undefined;
+    const s = try (Style{ .fg = .{ .rgb = .{ .r = 255, .g = 0, .b = 0 } } }).sequence(&buf, .basic);
+    try std.testing.expectEqualStrings("\x1b[0;91m", s);
+}
+
+test "sequence downgrades RGB to 256 palette" {
+    var buf: [64]u8 = undefined;
+    const s = try (Style{ .fg = .{ .rgb = .{ .r = 255, .g = 0, .b = 0 } } }).sequence(&buf, .palette_256);
+    try std.testing.expectEqualStrings("\x1b[0;38;5;196m", s);
+}
+
+test "sequence drops colors entirely on none level" {
+    var buf: [64]u8 = undefined;
+    const s = try (Style{
+        .fg = .{ .rgb = .{ .r = 255, .g = 0, .b = 0 } },
+        .bold = true,
+    }).sequence(&buf, .none);
+    try std.testing.expectEqualStrings("\x1b[0;1m", s);
 }
 
 test "eql distinguishes different colors" {
