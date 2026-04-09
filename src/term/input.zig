@@ -1,9 +1,9 @@
 //! Terminal input parser.
 //!
 //! Decodes raw bytes coming from a terminal into structured Key events.
-//! Handles ASCII, ctrl+letter, basic control keys, UTF-8 codepoints and the
-//! common CSI/SS3 escape sequences for arrow keys, navigation keys and F1
-//! through F12. Modifier-aware sequences and mouse events land later.
+//! Handles ASCII, ctrl+letter, basic control keys, UTF-8 codepoints, the
+//! common CSI/SS3 escape sequences for arrows, navigation and F1 through
+//! F12, modifier-aware sequences (Shift/Alt/Ctrl) and Alt+key combos.
 
 const std = @import("std");
 
@@ -79,25 +79,22 @@ pub fn parse(bytes: []const u8) ?ParseResult {
 
 fn parseEscape(bytes: []const u8) ?ParseResult {
     if (bytes.len == 1) return .{ .key = .{ .code = .escape }, .consumed = 1 };
-    return switch (bytes[1]) {
-        '[' => parseCsi(bytes),
-        'O' => parseSs3(bytes),
-        else => .{ .key = .{ .code = .escape }, .consumed = 1 },
-    };
+    const second = bytes[1];
+    if (second == '[') return parseCsi(bytes);
+    if (second == 'O') return parseSs3(bytes);
+
+    const inner = parse(bytes[1..]) orelse return loneEscape();
+    var key = inner.key;
+    key.modifiers.alt = true;
+    return .{ .key = key, .consumed = 1 + inner.consumed };
 }
 
 fn parseCsi(bytes: []const u8) ?ParseResult {
     if (bytes.len < 3) return null;
     const third = bytes[2];
 
-    switch (third) {
-        'A' => return result(.arrow_up, 3),
-        'B' => return result(.arrow_down, 3),
-        'C' => return result(.arrow_right, 3),
-        'D' => return result(.arrow_left, 3),
-        'H' => return result(.home, 3),
-        'F' => return result(.end, 3),
-        else => {},
+    if (finalLetterToCode(third)) |code| {
+        return .{ .key = .{ .code = code }, .consumed = 3 };
     }
 
     if (third < '0' or third > '9') return loneEscape();
@@ -105,27 +102,32 @@ fn parseCsi(bytes: []const u8) ?ParseResult {
     var i: usize = 2;
     while (i < bytes.len and bytes[i] >= '0' and bytes[i] <= '9') : (i += 1) {}
     if (i >= bytes.len) return null;
-    if (bytes[i] != '~') return loneEscape();
+    const first_num = std.fmt.parseInt(u32, bytes[2..i], 10) catch return loneEscape();
 
-    const num = std.fmt.parseInt(u32, bytes[2..i], 10) catch return loneEscape();
-    const code: KeyCode = switch (num) {
-        1, 7 => .home,
-        2 => .insert,
-        3 => .delete,
-        4, 8 => .end,
-        5 => .page_up,
-        6 => .page_down,
-        15 => .{ .f = 5 },
-        17 => .{ .f = 6 },
-        18 => .{ .f = 7 },
-        19 => .{ .f = 8 },
-        20 => .{ .f = 9 },
-        21 => .{ .f = 10 },
-        23 => .{ .f = 11 },
-        24 => .{ .f = 12 },
-        else => return loneEscape(),
-    };
-    return .{ .key = .{ .code = code }, .consumed = i + 1 };
+    var modifiers: Modifiers = .{};
+    if (bytes[i] == ';') {
+        const start = i + 1;
+        i = start;
+        while (i < bytes.len and bytes[i] >= '0' and bytes[i] <= '9') : (i += 1) {}
+        if (i >= bytes.len) return null;
+        if (i == start) return loneEscape();
+        const mod_num = std.fmt.parseInt(u32, bytes[start..i], 10) catch return loneEscape();
+        modifiers = decodeModifiers(mod_num);
+    }
+
+    const final = bytes[i];
+
+    if (finalLetterToCode(final)) |code| {
+        if (first_num != 1) return loneEscape();
+        return .{ .key = .{ .code = code, .modifiers = modifiers }, .consumed = i + 1 };
+    }
+
+    if (final == '~') {
+        const code = numericToCode(first_num) orelse return loneEscape();
+        return .{ .key = .{ .code = code, .modifiers = modifiers }, .consumed = i + 1 };
+    }
+
+    return loneEscape();
 }
 
 fn parseSs3(bytes: []const u8) ?ParseResult {
@@ -146,8 +148,46 @@ fn parseSs3(bytes: []const u8) ?ParseResult {
     return .{ .key = .{ .code = code }, .consumed = 3 };
 }
 
-fn result(code: KeyCode, consumed: usize) ParseResult {
-    return .{ .key = .{ .code = code }, .consumed = consumed };
+fn finalLetterToCode(b: u8) ?KeyCode {
+    return switch (b) {
+        'A' => .arrow_up,
+        'B' => .arrow_down,
+        'C' => .arrow_right,
+        'D' => .arrow_left,
+        'H' => .home,
+        'F' => .end,
+        else => null,
+    };
+}
+
+fn numericToCode(num: u32) ?KeyCode {
+    return switch (num) {
+        1, 7 => .home,
+        2 => .insert,
+        3 => .delete,
+        4, 8 => .end,
+        5 => .page_up,
+        6 => .page_down,
+        15 => .{ .f = 5 },
+        17 => .{ .f = 6 },
+        18 => .{ .f = 7 },
+        19 => .{ .f = 8 },
+        20 => .{ .f = 9 },
+        21 => .{ .f = 10 },
+        23 => .{ .f = 11 },
+        24 => .{ .f = 12 },
+        else => null,
+    };
+}
+
+fn decodeModifiers(num: u32) Modifiers {
+    if (num == 0 or num > 16) return .{};
+    const bits = num - 1;
+    return .{
+        .shift = (bits & 1) != 0,
+        .alt = (bits & 2) != 0,
+        .ctrl = (bits & 4) != 0,
+    };
 }
 
 fn loneEscape() ParseResult {
@@ -325,8 +365,89 @@ test "unknown numeric csi yields lone escape" {
     try std.testing.expectEqual(@as(usize, 1), r.consumed);
 }
 
-test "esc followed by random byte yields lone escape" {
-    const r = parse("\x1bx").?;
-    try std.testing.expectEqual(KeyCode.escape, r.key.code);
-    try std.testing.expectEqual(@as(usize, 1), r.consumed);
+test "csi shift arrow right" {
+    const r = parse("\x1b[1;2C").?;
+    try std.testing.expectEqual(KeyCode.arrow_right, r.key.code);
+    try std.testing.expect(r.key.modifiers.shift);
+    try std.testing.expect(!r.key.modifiers.ctrl);
+    try std.testing.expect(!r.key.modifiers.alt);
+}
+
+test "csi alt arrow left" {
+    const r = parse("\x1b[1;3D").?;
+    try std.testing.expectEqual(KeyCode.arrow_left, r.key.code);
+    try std.testing.expect(r.key.modifiers.alt);
+    try std.testing.expect(!r.key.modifiers.shift);
+    try std.testing.expect(!r.key.modifiers.ctrl);
+}
+
+test "csi ctrl arrow up" {
+    const r = parse("\x1b[1;5A").?;
+    try std.testing.expectEqual(KeyCode.arrow_up, r.key.code);
+    try std.testing.expect(r.key.modifiers.ctrl);
+}
+
+test "csi shift ctrl arrow down" {
+    const r = parse("\x1b[1;6B").?;
+    try std.testing.expectEqual(KeyCode.arrow_down, r.key.code);
+    try std.testing.expect(r.key.modifiers.shift);
+    try std.testing.expect(r.key.modifiers.ctrl);
+}
+
+test "csi all modifiers arrow right" {
+    const r = parse("\x1b[1;8C").?;
+    try std.testing.expectEqual(KeyCode.arrow_right, r.key.code);
+    try std.testing.expect(r.key.modifiers.shift);
+    try std.testing.expect(r.key.modifiers.alt);
+    try std.testing.expect(r.key.modifiers.ctrl);
+}
+
+test "csi modifier 1 means no modifier" {
+    const r = parse("\x1b[1;1A").?;
+    try std.testing.expectEqual(KeyCode.arrow_up, r.key.code);
+    try std.testing.expect(!r.key.modifiers.shift);
+    try std.testing.expect(!r.key.modifiers.alt);
+    try std.testing.expect(!r.key.modifiers.ctrl);
+}
+
+test "csi ctrl delete" {
+    const r = parse("\x1b[3;5~").?;
+    try std.testing.expectEqual(KeyCode.delete, r.key.code);
+    try std.testing.expect(r.key.modifiers.ctrl);
+}
+
+test "csi shift f5" {
+    const r = parse("\x1b[15;2~").?;
+    try std.testing.expectEqual(@as(u8, 5), r.key.code.f);
+    try std.testing.expect(r.key.modifiers.shift);
+}
+
+test "csi modified home" {
+    const r = parse("\x1b[1;5H").?;
+    try std.testing.expectEqual(KeyCode.home, r.key.code);
+    try std.testing.expect(r.key.modifiers.ctrl);
+}
+
+test "alt plus letter" {
+    const r = parse("\x1ba").?;
+    try std.testing.expectEqual(@as(u21, 'a'), r.key.code.char);
+    try std.testing.expect(r.key.modifiers.alt);
+    try std.testing.expectEqual(@as(usize, 2), r.consumed);
+}
+
+test "alt plus uppercase letter" {
+    const r = parse("\x1bX").?;
+    try std.testing.expectEqual(@as(u21, 'X'), r.key.code.char);
+    try std.testing.expect(r.key.modifiers.alt);
+}
+
+test "alt plus enter" {
+    const r = parse("\x1b\r").?;
+    try std.testing.expectEqual(KeyCode.enter, r.key.code);
+    try std.testing.expect(r.key.modifiers.alt);
+}
+
+test "incomplete modified csi returns null" {
+    try std.testing.expect(parse("\x1b[1;") == null);
+    try std.testing.expect(parse("\x1b[1;5") == null);
 }
