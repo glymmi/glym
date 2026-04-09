@@ -12,8 +12,12 @@ pub const TextInput = text_input.TextInput;
 pub const list = @import("widget/list.zig");
 pub const List = list.List;
 
+pub const text_area = @import("widget/text_area.zig");
+pub const TextArea = text_area.TextArea;
+
 test {
     std.testing.refAllDecls(@This());
     _ = text_input;
     _ = list;
+    _ = text_area;
 }
