@@ -242,12 +242,15 @@ pub const Renderer = struct {
         self.applyCell(row, start_col + 1 + shown, ' ', style);
     }
 
-    /// Draw a filled bordered box: paint the interior with `fill`, then
-    /// the border on top with `border_style`. The fill is contained
-    /// inside the frame: the border row and column themselves keep
-    /// whatever sits behind them, so the panel's background stops
-    /// exactly at the border line. A common building block for panels,
-    /// modals, and tooltips.
+    /// Draw a filled bordered box: paint the entire rectangle with
+    /// `fill`, then layer the border on top with `border_style`. Border
+    /// glyphs go through `applyCell` so they keep the fill background
+    /// and merge cleanly with the interior. For a perfectly flush
+    /// border use `Border.block` (half-block glyphs that hug the cell
+    /// edges); the centered box-drawing presets (sharp, rounded, ...)
+    /// have a half-cell of fill visible around the stroke because the
+    /// glyphs sit at the cell center, which is intrinsic to terminal
+    /// cell geometry.
     pub fn drawBox(
         self: *Renderer,
         row: u16,
@@ -259,13 +262,7 @@ pub const Renderer = struct {
         fill: Style,
     ) void {
         if (height == 0 or width == 0) return;
-        if (height >= 2 and width >= 2) {
-            self.fillRect(row + 1, col + 1, height - 2, width - 2, .{ .char = ' ', .style = fill });
-        } else {
-            // Degenerate rect with no room for an interior: just fill
-            // the whole thing so something is visible.
-            self.fillRect(row, col, height, width, .{ .char = ' ', .style = fill });
-        }
+        self.fillRect(row, col, height, width, .{ .char = ' ', .style = fill });
         self.drawBorder(row, col, height, width, border, border_style);
     }
 
@@ -548,15 +545,16 @@ test "drawBox fills the interior and frames it" {
     try std.testing.expectEqual(@as(u21, 0x250C), r.back[0].char);
 }
 
-test "drawBox keeps the fill out of the border row and column" {
+test "drawBox bleeds the fill background through the border cells" {
     var r = try Renderer.init(std.testing.allocator, 3, 3);
     defer r.deinit();
     const fill: Style = .{ .bg = .{ .indexed = 4 } };
     r.drawBox(0, 0, 3, 3, Border.sharp, .{}, fill);
-    // Border cells must NOT carry the fill background.
-    try std.testing.expect(!std.meta.eql(r.back[0].style.bg, fill.bg)); // top-left
-    try std.testing.expect(!std.meta.eql(r.back[2].style.bg, fill.bg)); // top-right
-    try std.testing.expect(!std.meta.eql(r.back[6].style.bg, fill.bg)); // bottom-left
-    try std.testing.expect(!std.meta.eql(r.back[1].style.bg, fill.bg)); // top edge
-    try std.testing.expect(!std.meta.eql(r.back[3].style.bg, fill.bg)); // left edge
+    // Border cells must carry the fill background so half-block borders
+    // (Border.block) seam cleanly into the interior.
+    try std.testing.expect(std.meta.eql(r.back[0].style.bg, fill.bg)); // top-left
+    try std.testing.expect(std.meta.eql(r.back[2].style.bg, fill.bg)); // top-right
+    try std.testing.expect(std.meta.eql(r.back[6].style.bg, fill.bg)); // bottom-left
+    try std.testing.expect(std.meta.eql(r.back[1].style.bg, fill.bg)); // top edge
+    try std.testing.expect(std.meta.eql(r.back[3].style.bg, fill.bg)); // left edge
 }

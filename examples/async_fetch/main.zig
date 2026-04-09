@@ -78,8 +78,8 @@ fn view(model: *Model, r: *P.Renderer) void {
     const box_h: u16 = 11;
     const box_w: u16 = 44;
 
-    r.drawBox(box_row, box_col, box_h, box_w, glym.style.Border.rounded, panel_border, panel_fill);
-    r.drawBorderTitled(box_row, box_col, box_h, box_w, glym.style.Border.rounded, panel_border, "async fetch", title_style);
+    r.drawBox(box_row, box_col, box_h, box_w, glym.style.Border.block, panel_border, panel_fill);
+    r.drawBorderTitled(box_row, box_col, box_h, box_w, glym.style.Border.block, panel_border, "async fetch", title_style);
 
     const inner_col: u16 = box_col + 2;
 

@@ -75,6 +75,23 @@ pub const Border = struct {
         .bottom = '-',
         .bottom_right = '+',
     };
+
+    /// Half-block / quadrant border that aligns to the cell edges
+    /// instead of sitting at the cell center. Pair this with `drawBox`
+    /// (which fills the whole rect including the border row and column)
+    /// to get a perfectly flush "Lipgloss-style" panel where the border
+    /// stroke meets the interior fill with no visible gap on either
+    /// side.
+    pub const block: Border = .{
+        .top_left = 0x259B, // ▛
+        .top = 0x2580, // ▀
+        .top_right = 0x259C, // ▜
+        .left = 0x258C, // ▌
+        .right = 0x2590, // ▐
+        .bottom_left = 0x2599, // ▙
+        .bottom = 0x2584, // ▄
+        .bottom_right = 0x259F, // ▟
+    };
 };
 
 test "sharp and rounded differ on corners only" {
