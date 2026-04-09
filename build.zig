@@ -42,6 +42,7 @@ pub fn build(b: *std.Build) void {
     addExample(b, glym_mod, target, optimize, "input", "examples/input/main.zig");
     addExample(b, glym_mod, target, optimize, "progress_bar", "examples/progress_bar/main.zig");
     addExample(b, glym_mod, target, optimize, "textarea", "examples/textarea/main.zig");
+    addExample(b, glym_mod, target, optimize, "async_fetch", "examples/async_fetch/main.zig");
 }
 
 fn addExample(
