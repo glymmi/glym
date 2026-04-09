@@ -78,6 +78,14 @@ pub fn Program(comptime Model: type, comptime AppMsg: type) type {
 
             try writeAll(stdout_handle, ansi.clear_screen);
 
+            // POSIX resize wakeup: a self-pipe driven by SIGWINCH lets the
+            // read loop wake up the moment the terminal is resized, even
+            // when the user has not pressed a key. Windows still relies on
+            // the per-iteration size poll until we move to ReadConsoleInput.
+            var resize_pipe: ResizePipe = .{};
+            try resize_pipe.install();
+            defer resize_pipe.uninstall();
+
             const current_size = term_size.get(stdout_handle) catch term_size.Size{ .rows = 24, .cols = 80 };
 
             var renderer = try renderer_mod.Renderer.init(self.allocator, current_size.rows, current_size.cols);
@@ -95,33 +103,41 @@ pub fn Program(comptime Model: type, comptime AppMsg: type) type {
             defer pending.deinit(self.allocator);
 
             while (true) {
-                const n = readBytes(stdin_handle, &read_buf) catch |err| switch (err) {
-                    error.ReadFailed => break,
-                    else => return err,
-                };
-                if (n == 0) break;
-                try pending.appendSlice(self.allocator, read_buf[0..n]);
+                const wake = try resize_pipe.wait(stdin_handle);
 
                 var should_quit = false;
-                while (input.parse(pending.items)) |result| {
-                    const remaining = pending.items[result.consumed..];
-                    std.mem.copyForwards(u8, pending.items[0..remaining.len], remaining);
-                    pending.shrinkRetainingCapacity(remaining.len);
+                if (wake.input_ready) {
+                    const n = readBytes(stdin_handle, &read_buf) catch |err| switch (err) {
+                        error.ReadFailed => break,
+                        else => return err,
+                    };
+                    if (n == 0) break;
+                    try pending.appendSlice(self.allocator, read_buf[0..n]);
 
-                    const wrapped: Msg = .{ .key = result.key };
-                    if (try self.step(&model, wrapped) == .quit) {
-                        should_quit = true;
-                        break;
+                    while (input.parse(pending.items)) |result| {
+                        const remaining = pending.items[result.consumed..];
+                        std.mem.copyForwards(u8, pending.items[0..remaining.len], remaining);
+                        pending.shrinkRetainingCapacity(remaining.len);
+
+                        const wrapped: Msg = .{ .key = result.key };
+                        if (try self.step(&model, wrapped) == .quit) {
+                            should_quit = true;
+                            break;
+                        }
                     }
                 }
                 if (should_quit) break;
 
-                if (term_size.get(stdout_handle)) |new_size| {
-                    if (new_size.rows != renderer.rows or new_size.cols != renderer.cols) {
-                        try renderer.resize(new_size.rows, new_size.cols);
-                        if (try self.step(&model, .{ .resize = new_size }) == .quit) break;
-                    }
-                } else |_| {}
+                // Resize check: triggered by SIGWINCH on POSIX, or polled
+                // every iteration on Windows.
+                if (wake.resize_ready or builtin.os.tag == .windows) {
+                    if (term_size.get(stdout_handle)) |new_size| {
+                        if (new_size.rows != renderer.rows or new_size.cols != renderer.cols) {
+                            try renderer.resize(new_size.rows, new_size.cols);
+                            if (try self.step(&model, .{ .resize = new_size }) == .quit) break;
+                        }
+                    } else |_| {}
+                }
 
                 renderer.clear();
                 self.view_fn(&model, &renderer);
@@ -142,6 +158,76 @@ pub fn Program(comptime Model: type, comptime AppMsg: type) type {
         }
     };
 }
+
+// SIGWINCH self-pipe state. The signal handler can only call
+// async-signal-safe functions, so it just writes a single byte to a pipe
+// that the main loop polls alongside stdin.
+const sigwinch = if (builtin.os.tag == .windows) struct {} else struct {
+    var write_fd: std.posix.fd_t = -1;
+
+    fn handler(_: i32) callconv(.c) void {
+        if (write_fd >= 0) {
+            const byte = [_]u8{1};
+            _ = std.posix.write(write_fd, &byte) catch {};
+        }
+    }
+};
+
+const Wake = struct {
+    input_ready: bool,
+    resize_ready: bool,
+};
+
+const ResizePipe = struct {
+    read_fd: if (builtin.os.tag == .windows) void else std.posix.fd_t = if (builtin.os.tag == .windows) {} else -1,
+    installed: bool = false,
+    old_action: if (builtin.os.tag == .windows) void else std.posix.Sigaction = undefined,
+
+    fn install(self: *ResizePipe) !void {
+        if (builtin.os.tag == .windows) return;
+        const fds = try std.posix.pipe();
+        self.read_fd = fds[0];
+        sigwinch.write_fd = fds[1];
+        var act: std.posix.Sigaction = .{
+            .handler = .{ .handler = sigwinch.handler },
+            .mask = std.mem.zeroes(std.posix.sigset_t),
+            .flags = std.posix.SA.RESTART,
+        };
+        std.posix.sigaction(std.posix.SIG.WINCH, &act, &self.old_action);
+        self.installed = true;
+    }
+
+    fn uninstall(self: *ResizePipe) void {
+        if (builtin.os.tag == .windows) return;
+        if (!self.installed) return;
+        std.posix.sigaction(std.posix.SIG.WINCH, &self.old_action, null);
+        std.posix.close(sigwinch.write_fd);
+        std.posix.close(self.read_fd);
+        sigwinch.write_fd = -1;
+        self.installed = false;
+    }
+
+    fn wait(self: *ResizePipe, stdin_handle: raw.Handle) !Wake {
+        if (builtin.os.tag == .windows) {
+            // Windows path stays blocking on stdin; resize is polled
+            // after each read in the main loop.
+            return .{ .input_ready = true, .resize_ready = false };
+        }
+        var fds = [_]std.posix.pollfd{
+            .{ .fd = stdin_handle, .events = std.posix.POLL.IN, .revents = 0 },
+            .{ .fd = self.read_fd, .events = std.posix.POLL.IN, .revents = 0 },
+        };
+        _ = try std.posix.poll(&fds, -1);
+        var resize_ready = false;
+        if (fds[1].revents & std.posix.POLL.IN != 0) {
+            var drain: [16]u8 = undefined;
+            _ = std.posix.read(self.read_fd, &drain) catch {};
+            resize_ready = true;
+        }
+        const input_ready = (fds[0].revents & std.posix.POLL.IN) != 0;
+        return .{ .input_ready = input_ready, .resize_ready = resize_ready };
+    }
+};
 
 fn stdinHandle() raw.Handle {
     if (builtin.os.tag == .windows) {
