@@ -2,9 +2,11 @@
 //!
 //! A `Cmd` is the value `update` returns to describe an effect the runtime
 //! should perform. `none` does nothing, `quit` tells the runtime to exit
-//! cleanly, and `custom` carries a function the runtime calls to produce an
-//! optional follow-up app message. The runtime stays synchronous for now;
-//! a thread pool for async commands lands later.
+//! cleanly, `custom` runs a function inline on the main loop, and
+//! `async_task` hands a function to a worker pool so a slow operation
+//! (network, disk) does not block input. Both kinds may return an
+//! optional follow-up app message that the runtime feeds back into
+//! `update`.
 
 const std = @import("std");
 
@@ -13,6 +15,7 @@ pub fn Cmd(comptime AppMsg: type) type {
         none,
         quit,
         custom: *const fn (std.mem.Allocator) anyerror!?AppMsg,
+        async_task: *const fn (std.mem.Allocator) anyerror!?AppMsg,
     };
 }
 

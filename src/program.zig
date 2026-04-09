@@ -40,25 +40,117 @@ pub fn Program(comptime Model: type, comptime AppMsg: type) type {
         deinit_fn: ?DeinitFn = null,
 
         /// Run a single update + command pass on the given model. Exposed
-        /// so tests can drive the runtime without a real terminal.
+        /// so tests can drive the runtime without a real terminal. When
+        /// called outside `run`, async commands execute inline because
+        /// there is no worker pool to dispatch to.
         pub fn step(self: Self, model: *Model, m: Msg) anyerror!StepResult {
-            const c = self.update_fn(model, m);
-            return self.runCmd(c, model);
+            return self.stepInner(model, m, null);
         }
 
-        fn runCmd(self: Self, c: Cmd, model: *Model) anyerror!StepResult {
+        fn stepInner(self: Self, model: *Model, m: Msg, runner: ?*AsyncRunner) anyerror!StepResult {
+            const c = self.update_fn(model, m);
+            return self.runCmd(c, model, runner);
+        }
+
+        fn runCmd(self: Self, c: Cmd, model: *Model, runner: ?*AsyncRunner) anyerror!StepResult {
             return switch (c) {
                 .none => .keep_running,
                 .quit => .quit,
                 .custom => |func| blk: {
                     const result = try func(self.allocator);
                     if (result) |app_msg| {
-                        break :blk try self.step(model, .{ .app = app_msg });
+                        break :blk try self.stepInner(model, .{ .app = app_msg }, runner);
+                    }
+                    break :blk .keep_running;
+                },
+                .async_task => |func| blk: {
+                    if (async_supported) {
+                        if (runner) |rn| {
+                            try rn.spawn(func);
+                            break :blk .keep_running;
+                        }
+                    }
+                    // No runner (e.g. tests via step) or no thread support:
+                    // run inline so the result is observable.
+                    const result = try func(self.allocator);
+                    if (result) |app_msg| {
+                        break :blk try self.stepInner(model, .{ .app = app_msg }, runner);
                     }
                     break :blk .keep_running;
                 },
             };
         }
+
+        /// Worker pool that runs `Cmd.async_task` off the main loop. On
+        /// POSIX it owns a `std.Thread.Pool`, a results queue, and a
+        /// self-pipe so the main loop's `poll` wakes up as soon as a job
+        /// produces a follow-up message. On Windows it is a stub and the
+        /// runtime falls back to running async tasks inline.
+        const async_supported = builtin.os.tag != .windows and @sizeOf(AppMsg) > 0;
+
+        const AsyncRunner = if (!async_supported) struct {
+            fn init(self: *AsyncRunner, _: std.mem.Allocator) !void {
+                _ = self;
+            }
+            fn deinit(self: *AsyncRunner) void {
+                _ = self;
+            }
+        } else struct {
+            allocator: std.mem.Allocator,
+            pool: std.Thread.Pool = undefined,
+            mutex: std.Thread.Mutex = .{},
+            results: std.ArrayList(AppMsg) = .{},
+            wake_read_fd: std.posix.fd_t = -1,
+            wake_write_fd: std.posix.fd_t = -1,
+            initialized: bool = false,
+
+            const TaskFn = *const fn (std.mem.Allocator) anyerror!?AppMsg;
+
+            fn init(self: *AsyncRunner, allocator: std.mem.Allocator) !void {
+                const fds = try std.posix.pipe();
+                self.* = .{
+                    .allocator = allocator,
+                    .wake_read_fd = fds[0],
+                    .wake_write_fd = fds[1],
+                };
+                try self.pool.init(.{ .allocator = allocator });
+                self.initialized = true;
+            }
+
+            fn deinit(self: *AsyncRunner) void {
+                if (!self.initialized) return;
+                self.pool.deinit();
+                self.results.deinit(self.allocator);
+                std.posix.close(self.wake_read_fd);
+                std.posix.close(self.wake_write_fd);
+                self.initialized = false;
+            }
+
+            fn spawn(self: *AsyncRunner, func: TaskFn) !void {
+                try self.pool.spawn(workerEntry, .{ self, func });
+            }
+
+            fn workerEntry(self: *AsyncRunner, func: TaskFn) void {
+                const result = func(self.allocator) catch return;
+                if (result) |app_msg| {
+                    self.mutex.lock();
+                    self.results.append(self.allocator, app_msg) catch {
+                        self.mutex.unlock();
+                        return;
+                    };
+                    self.mutex.unlock();
+                    const byte = [_]u8{1};
+                    _ = std.posix.write(self.wake_write_fd, &byte) catch {};
+                }
+            }
+
+            fn drain(self: *AsyncRunner, out: *std.ArrayList(AppMsg)) !void {
+                self.mutex.lock();
+                defer self.mutex.unlock();
+                try out.appendSlice(self.allocator, self.results.items);
+                self.results.clearRetainingCapacity();
+            }
+        };
 
         /// Set the terminal up, drive the loop until quit, then restore
         /// the terminal. Every exit path, error or clean, leaves the alt
@@ -86,6 +178,10 @@ pub fn Program(comptime Model: type, comptime AppMsg: type) type {
             try resize_pipe.install();
             defer resize_pipe.uninstall();
 
+            var runner: AsyncRunner = undefined;
+            try runner.init(self.allocator);
+            defer runner.deinit();
+
             const current_size = term_size.get(stdout_handle) catch term_size.Size{ .rows = 24, .cols = 80 };
 
             var renderer = try renderer_mod.Renderer.init(self.allocator, current_size.rows, current_size.cols);
@@ -102,8 +198,13 @@ pub fn Program(comptime Model: type, comptime AppMsg: type) type {
             var pending: std.ArrayList(u8) = .{};
             defer pending.deinit(self.allocator);
 
+            var async_results: if (async_supported) std.ArrayList(AppMsg) else void =
+                if (async_supported) .{} else {};
+            defer if (async_supported) async_results.deinit(self.allocator);
+
             while (true) {
-                const wake = try resize_pipe.wait(stdin_handle);
+                const async_fd: AsyncFd = if (builtin.os.tag == .windows) {} else if (async_supported) runner.wake_read_fd else -1;
+                const wake = try resize_pipe.wait(stdin_handle, async_fd);
 
                 var should_quit = false;
                 if (wake.input_ready) {
@@ -120,7 +221,20 @@ pub fn Program(comptime Model: type, comptime AppMsg: type) type {
                         pending.shrinkRetainingCapacity(remaining.len);
 
                         const wrapped: Msg = .{ .key = result.key };
-                        if (try self.step(&model, wrapped) == .quit) {
+                        if (try self.stepInner(&model, wrapped, &runner) == .quit) {
+                            should_quit = true;
+                            break;
+                        }
+                    }
+                }
+                if (should_quit) break;
+
+                // Drain async task results into the model.
+                if (wake.async_ready and async_supported) {
+                    async_results.clearRetainingCapacity();
+                    try runner.drain(&async_results);
+                    for (async_results.items) |app_msg| {
+                        if (try self.stepInner(&model, .{ .app = app_msg }, &runner) == .quit) {
                             should_quit = true;
                             break;
                         }
@@ -134,7 +248,7 @@ pub fn Program(comptime Model: type, comptime AppMsg: type) type {
                     if (term_size.get(stdout_handle)) |new_size| {
                         if (new_size.rows != renderer.rows or new_size.cols != renderer.cols) {
                             try renderer.resize(new_size.rows, new_size.cols);
-                            if (try self.step(&model, .{ .resize = new_size }) == .quit) break;
+                            if (try self.stepInner(&model, .{ .resize = new_size }, &runner) == .quit) break;
                         }
                     } else |_| {}
                 }
@@ -176,6 +290,7 @@ const sigwinch = if (builtin.os.tag == .windows) struct {} else struct {
 const Wake = struct {
     input_ready: bool,
     resize_ready: bool,
+    async_ready: bool,
 };
 
 const ResizePipe = struct {
@@ -207,27 +322,40 @@ const ResizePipe = struct {
         self.installed = false;
     }
 
-    fn wait(self: *ResizePipe, stdin_handle: raw.Handle) !Wake {
+    fn wait(self: *ResizePipe, stdin_handle: raw.Handle, async_fd: AsyncFd) !Wake {
         if (builtin.os.tag == .windows) {
             // Windows path stays blocking on stdin; resize is polled
-            // after each read in the main loop.
-            return .{ .input_ready = true, .resize_ready = false };
+            // after each read in the main loop, and async tasks run
+            // inline.
+            return .{ .input_ready = true, .resize_ready = false, .async_ready = false };
         }
-        var fds = [_]std.posix.pollfd{
-            .{ .fd = stdin_handle, .events = std.posix.POLL.IN, .revents = 0 },
-            .{ .fd = self.read_fd, .events = std.posix.POLL.IN, .revents = 0 },
-        };
-        _ = try std.posix.poll(&fds, -1);
+        var fd_buf: [3]std.posix.pollfd = undefined;
+        fd_buf[0] = .{ .fd = stdin_handle, .events = std.posix.POLL.IN, .revents = 0 };
+        fd_buf[1] = .{ .fd = self.read_fd, .events = std.posix.POLL.IN, .revents = 0 };
+        var n: usize = 2;
+        if (async_fd >= 0) {
+            fd_buf[2] = .{ .fd = async_fd, .events = std.posix.POLL.IN, .revents = 0 };
+            n = 3;
+        }
+        _ = try std.posix.poll(fd_buf[0..n], -1);
         var resize_ready = false;
-        if (fds[1].revents & std.posix.POLL.IN != 0) {
+        if (fd_buf[1].revents & std.posix.POLL.IN != 0) {
             var drain: [16]u8 = undefined;
             _ = std.posix.read(self.read_fd, &drain) catch {};
             resize_ready = true;
         }
-        const input_ready = (fds[0].revents & std.posix.POLL.IN) != 0;
-        return .{ .input_ready = input_ready, .resize_ready = resize_ready };
+        var async_ready = false;
+        if (n == 3 and fd_buf[2].revents & std.posix.POLL.IN != 0) {
+            var drain: [16]u8 = undefined;
+            _ = std.posix.read(async_fd, &drain) catch {};
+            async_ready = true;
+        }
+        const input_ready = (fd_buf[0].revents & std.posix.POLL.IN) != 0;
+        return .{ .input_ready = input_ready, .resize_ready = resize_ready, .async_ready = async_ready };
     }
 };
+
+const AsyncFd = if (builtin.os.tag == .windows) void else std.posix.fd_t;
 
 fn stdinHandle() raw.Handle {
     if (builtin.os.tag == .windows) {

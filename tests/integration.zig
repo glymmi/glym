@@ -192,6 +192,51 @@ test "text_area: split a line with enter" {
     try std.testing.expectEqual(@as(u21, 'd'), r.back[11].char);
 }
 
+// -- async task scenario --
+
+const AsyncApp = struct {
+    const Model = struct { hits: u32 = 0 };
+    const App = union(enum) { pong };
+    const P = glym.Program(Model, App);
+
+    fn init(_: std.mem.Allocator) anyerror!Model {
+        return .{};
+    }
+
+    fn pingTask(_: std.mem.Allocator) anyerror!?App {
+        return .pong;
+    }
+
+    fn update(model: *Model, m: P.Msg) P.Cmd {
+        switch (m) {
+            .key => return .{ .async_task = pingTask },
+            .app => |a| switch (a) {
+                .pong => model.hits += 1,
+            },
+            else => {},
+        }
+        return .none;
+    }
+
+    fn view(_: *Model, _: *P.Renderer) void {}
+};
+
+test "async_task: step runs the task inline and feeds the result back" {
+    const prog: AsyncApp.P = .{
+        .allocator = allocator,
+        .init_fn = AsyncApp.init,
+        .update_fn = AsyncApp.update,
+        .view_fn = AsyncApp.view,
+    };
+    var model = try prog.init_fn(allocator);
+
+    // Outside `run`, async_task runs synchronously so the result is
+    // observable immediately. Inside `run`, the same Cmd would be
+    // dispatched to the worker pool and surface on a later iteration.
+    _ = try prog.step(&model, .{ .key = .{ .code = .enter } });
+    try std.testing.expectEqual(@as(u32, 1), model.hits);
+}
+
 // -- list scenario --
 
 const ListApp = struct {
