@@ -69,23 +69,34 @@ const muted_style: glym.style.Style = .{ .fg = .{ .rgb = palette.slate_500 }, .i
 const stat_style: glym.style.Style = .{ .fg = .{ .rgb = palette.slate_300 } };
 const value_style: glym.style.Style = .{ .fg = .{ .rgb = palette.emerald_300 }, .bold = true };
 const loading_style: glym.style.Style = .{ .fg = .{ .rgb = palette.amber_300 }, .dim = true };
+const panel_border: glym.style.Style = .{ .fg = .{ .rgb = palette.violet_500 } };
+const panel_fill: glym.style.Style = .{ .bg = .{ .rgb = palette.slate_900 } };
 
 fn view(model: *Model, r: *P.Renderer) void {
-    r.writeStyledText(1, 2, "Async fetch demo", title_style);
-    r.writeStyledText(3, 2, "space to fetch, esc or ctrl+c to quit", muted_style);
+    const box_row: u16 = 1;
+    const box_col: u16 = 2;
+    const box_h: u16 = 11;
+    const box_w: u16 = 44;
+
+    r.drawBox(box_row, box_col, box_h, box_w, glym.style.Border.rounded, panel_border, panel_fill);
+    r.drawBorderTitled(box_row, box_col, box_h, box_w, glym.style.Border.rounded, panel_border, "async fetch", title_style);
+
+    const inner_col: u16 = box_col + 2;
+
+    r.writeStyledText(box_row + 2, inner_col, "space to fetch, esc or ctrl+c to quit", muted_style);
 
     var buf: [64]u8 = undefined;
     const stats = std.fmt.bufPrint(&buf, "in flight: {d}   completed: {d}", .{ model.in_flight, model.completed }) catch return;
-    r.writeStyledText(5, 2, stats, stat_style);
+    r.writeStyledText(box_row + 4, inner_col, stats, stat_style);
 
     if (model.completed > 0) {
         var buf2: [64]u8 = undefined;
         const last = std.fmt.bufPrint(&buf2, "last value: {d}", .{model.last_value}) catch return;
-        r.writeStyledText(6, 2, last, value_style);
+        r.writeStyledText(box_row + 5, inner_col, last, value_style);
     }
 
     if (model.in_flight > 0) {
-        r.writeStyledText(8, 2, "loading...", loading_style);
+        r.writeCenteredText(box_row + 7, box_col, box_w, "loading...", loading_style);
     }
 }
 

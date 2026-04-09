@@ -9,6 +9,8 @@ const std = @import("std");
 const Style = @import("style/style.zig").Style;
 const color = @import("style/color.zig");
 const Rgb = color.Rgb;
+const border_mod = @import("style/border.zig");
+const Border = border_mod.Border;
 
 pub const Cell = struct {
     char: u21 = ' ',
@@ -145,6 +147,101 @@ pub const Renderer = struct {
         }
     }
 
+    /// Fill a rectangle with `cell`. Out-of-bounds writes are silently
+    /// clipped. Useful for painting solid panels behind text.
+    pub fn fillRect(self: *Renderer, row: u16, col: u16, height: u16, width: u16, cell: Cell) void {
+        var dr: u16 = 0;
+        while (dr < height) : (dr += 1) {
+            var dc: u16 = 0;
+            while (dc < width) : (dc += 1) {
+                self.setCell(row + dr, col + dc, cell);
+            }
+        }
+    }
+
+    /// Write a string centered horizontally inside a `width`-cell wide
+    /// region starting at (row, col). Strings longer than the region are
+    /// truncated from the right.
+    pub fn writeCenteredText(self: *Renderer, row: u16, col: u16, width: u16, text: []const u8, style: Style) void {
+        const cp_count = utf8CodepointCount(text);
+        if (cp_count >= width) {
+            self.writeStyledText(row, col, text, style);
+            return;
+        }
+        const offset: u16 = @intCast((@as(usize, width) - cp_count) / 2);
+        self.writeStyledText(row, col + offset, text, style);
+    }
+
+    /// Draw a border rectangle of `border` glyphs styled with `style`.
+    /// The rectangle's interior is left untouched. A `height` or `width`
+    /// below 2 collapses to a no-op.
+    pub fn drawBorder(self: *Renderer, row: u16, col: u16, height: u16, width: u16, border: Border, style: Style) void {
+        if (height < 2 or width < 2) return;
+        const last_row = row + height - 1;
+        const last_col = col + width - 1;
+        // Corners.
+        self.setCell(row, col, .{ .char = border.top_left, .style = style });
+        self.setCell(row, last_col, .{ .char = border.top_right, .style = style });
+        self.setCell(last_row, col, .{ .char = border.bottom_left, .style = style });
+        self.setCell(last_row, last_col, .{ .char = border.bottom_right, .style = style });
+        // Top and bottom edges.
+        var c: u16 = col + 1;
+        while (c < last_col) : (c += 1) {
+            self.setCell(row, c, .{ .char = border.top, .style = style });
+            self.setCell(last_row, c, .{ .char = border.bottom, .style = style });
+        }
+        // Left and right edges.
+        var r: u16 = row + 1;
+        while (r < last_row) : (r += 1) {
+            self.setCell(r, col, .{ .char = border.left, .style = style });
+            self.setCell(r, last_col, .{ .char = border.right, .style = style });
+        }
+    }
+
+    /// Draw a border with a centered title sitting on the top edge. The
+    /// title is padded with a single space on each side and styled with
+    /// `title_style`.
+    pub fn drawBorderTitled(
+        self: *Renderer,
+        row: u16,
+        col: u16,
+        height: u16,
+        width: u16,
+        border: Border,
+        style: Style,
+        title: []const u8,
+        title_style: Style,
+    ) void {
+        self.drawBorder(row, col, height, width, border, style);
+        if (width < 4 or title.len == 0) return;
+        const title_len = utf8CodepointCount(title);
+        // Reserve a 1-cell space on each side of the title.
+        const max_title: u16 = width - 4;
+        const shown: u16 = if (title_len > max_title) max_title else @intCast(title_len);
+        const start_col: u16 = col + (width - shown - 2) / 2;
+        self.setCell(row, start_col, .{ .char = ' ', .style = style });
+        self.writeStyledText(row, start_col + 1, title, title_style);
+        self.setCell(row, start_col + 1 + shown, .{ .char = ' ', .style = style });
+    }
+
+    /// Draw a filled bordered box: paint the interior with `fill`, then
+    /// the border on top with `border_style`. A common building block
+    /// for panels, modals, and tooltips.
+    pub fn drawBox(
+        self: *Renderer,
+        row: u16,
+        col: u16,
+        height: u16,
+        width: u16,
+        border: Border,
+        border_style: Style,
+        fill: Style,
+    ) void {
+        if (height == 0 or width == 0) return;
+        self.fillRect(row, col, height, width, .{ .char = ' ', .style = fill });
+        self.drawBorder(row, col, height, width, border, border_style);
+    }
+
     /// Diff the back buffer against the front buffer and produce the bytes
     /// to send to the terminal. The returned slice is owned by the renderer
     /// and is valid until the next flush call.
@@ -180,6 +277,18 @@ pub const Renderer = struct {
         return self.out.items;
     }
 };
+
+fn utf8CodepointCount(text: []const u8) u16 {
+    var n: u16 = 0;
+    var i: usize = 0;
+    while (i < text.len) {
+        const len = std.unicode.utf8ByteSequenceLength(text[i]) catch return n;
+        if (i + len > text.len) return n;
+        i += len;
+        n += 1;
+    }
+    return n;
+}
 
 test "init sets dimensions" {
     var r = try Renderer.init(std.testing.allocator, 5, 10);
@@ -319,4 +428,70 @@ test "resize updates dimensions and forces full redraw" {
     const out = try r.flush();
     try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[3;4H") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "Z") != null);
+}
+
+test "fillRect paints a uniform region" {
+    var r = try Renderer.init(std.testing.allocator, 4, 4);
+    defer r.deinit();
+    r.fillRect(1, 1, 2, 2, .{ .char = '#' });
+    try std.testing.expectEqual(@as(u21, ' '), r.back[0].char);
+    try std.testing.expectEqual(@as(u21, '#'), r.back[5].char);
+    try std.testing.expectEqual(@as(u21, '#'), r.back[6].char);
+    try std.testing.expectEqual(@as(u21, '#'), r.back[9].char);
+    try std.testing.expectEqual(@as(u21, '#'), r.back[10].char);
+}
+
+test "writeCenteredText centers a short string" {
+    var r = try Renderer.init(std.testing.allocator, 1, 10);
+    defer r.deinit();
+    r.writeCenteredText(0, 0, 10, "hi", .{});
+    // (10 - 2) / 2 = 4 -> "h" at col 4, "i" at col 5
+    try std.testing.expectEqual(@as(u21, ' '), r.back[3].char);
+    try std.testing.expectEqual(@as(u21, 'h'), r.back[4].char);
+    try std.testing.expectEqual(@as(u21, 'i'), r.back[5].char);
+}
+
+test "drawBorder draws corners and edges" {
+    var r = try Renderer.init(std.testing.allocator, 4, 4);
+    defer r.deinit();
+    r.drawBorder(0, 0, 4, 4, Border.sharp, .{});
+    try std.testing.expectEqual(@as(u21, 0x250C), r.back[0].char);
+    try std.testing.expectEqual(@as(u21, 0x2510), r.back[3].char);
+    try std.testing.expectEqual(@as(u21, 0x2514), r.back[12].char);
+    try std.testing.expectEqual(@as(u21, 0x2518), r.back[15].char);
+    try std.testing.expectEqual(@as(u21, 0x2500), r.back[1].char);
+    try std.testing.expectEqual(@as(u21, 0x2502), r.back[4].char);
+    // Interior stays untouched.
+    try std.testing.expectEqual(@as(u21, ' '), r.back[5].char);
+}
+
+test "drawBorder is a no-op for tiny rectangles" {
+    var r = try Renderer.init(std.testing.allocator, 2, 2);
+    defer r.deinit();
+    r.drawBorder(0, 0, 1, 4, Border.sharp, .{});
+    try std.testing.expectEqual(@as(u21, ' '), r.back[0].char);
+}
+
+test "drawBorderTitled places title on the top edge" {
+    var r = try Renderer.init(std.testing.allocator, 3, 12);
+    defer r.deinit();
+    r.drawBorderTitled(0, 0, 3, 12, Border.rounded, .{}, "hi", .{});
+    // " hi " centered on 12-col top edge: shown=2, start=(12-2-2)/2=4
+    // -> col 4 = ' ', col 5 = 'h', col 6 = 'i', col 7 = ' '
+    try std.testing.expectEqual(@as(u21, ' '), r.back[4].char);
+    try std.testing.expectEqual(@as(u21, 'h'), r.back[5].char);
+    try std.testing.expectEqual(@as(u21, 'i'), r.back[6].char);
+    try std.testing.expectEqual(@as(u21, ' '), r.back[7].char);
+}
+
+test "drawBox fills the interior and frames it" {
+    var r = try Renderer.init(std.testing.allocator, 3, 3);
+    defer r.deinit();
+    const fill: Style = .{ .bg = .{ .indexed = 4 } };
+    r.drawBox(0, 0, 3, 3, Border.sharp, .{}, fill);
+    // Interior cell carries the fill style.
+    try std.testing.expectEqual(@as(u21, ' '), r.back[4].char);
+    try std.testing.expect(Style.eql(r.back[4].style, fill));
+    // Border corners overwrite the fill char.
+    try std.testing.expectEqual(@as(u21, 0x250C), r.back[0].char);
 }
