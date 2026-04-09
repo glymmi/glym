@@ -64,12 +64,12 @@ fn update(model: *Model, m: P.Msg) P.Cmd {
 
 const palette = glym.style.palette;
 
-const title_style: glym.style.Style = .{ .fg = .{ .rgb = palette.violet_300 }, .bold = true };
-const muted_style: glym.style.Style = .{ .fg = .{ .rgb = palette.slate_500 }, .italic = true };
-const stat_style: glym.style.Style = .{ .fg = .{ .rgb = palette.slate_300 } };
-const value_style: glym.style.Style = .{ .fg = .{ .rgb = palette.emerald_300 }, .bold = true };
-const loading_style: glym.style.Style = .{ .fg = .{ .rgb = palette.amber_300 }, .dim = true };
-const panel_border: glym.style.Style = .{ .fg = .{ .rgb = palette.violet_500 } };
+const title_style: glym.style.Style = .{ .fg = .{ .rgb = palette.mauve }, .bold = true };
+const muted_style: glym.style.Style = .{ .fg = .{ .rgb = palette.overlay0 }, .italic = true };
+const stat_style: glym.style.Style = .{ .fg = .{ .rgb = palette.subtext0 } };
+const value_style: glym.style.Style = .{ .fg = .{ .rgb = palette.green }, .bold = true };
+const loading_style: glym.style.Style = .{ .fg = .{ .rgb = palette.peach }, .dim = true };
+const panel_border: glym.style.Style = .{ .fg = .{ .rgb = palette.mauve } };
 
 fn view(model: *Model, r: *P.Renderer) void {
     const box_row: u16 = 1;

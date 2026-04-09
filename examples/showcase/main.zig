@@ -41,15 +41,15 @@ fn update(_: *Model, m: P.Msg) P.Cmd {
 
 // -- shared styles --
 
-const muted: Style = .{ .fg = .{ .rgb = palette.slate_500 }, .italic = true };
-const label: Style = .{ .fg = .{ .rgb = palette.slate_300 } };
-const heading: Style = .{ .fg = .{ .rgb = palette.violet_300 }, .bold = true };
-const accent_border: Style = .{ .fg = .{ .rgb = palette.violet_500 } };
+const muted: Style = .{ .fg = .{ .rgb = palette.overlay0 }, .italic = true };
+const label: Style = .{ .fg = .{ .rgb = palette.subtext0 } };
+const heading: Style = .{ .fg = .{ .rgb = palette.mauve }, .bold = true };
+const accent_border: Style = .{ .fg = .{ .rgb = palette.mauve } };
 
 // -- sections --
 
 fn drawTitle(r: *P.Renderer) void {
-    r.writeGradientText(1, 0, "      glym styling showcase      ", palette.violet_300, palette.sky_300, .{ .bold = true });
+    r.writeGradientText(1, 0, "      glym styling showcase      ", palette.mauve, palette.sky, .{ .bold = true });
     r.writeCenteredText(2, 0, r.cols, "press q or esc to quit", muted);
 }
 
@@ -79,7 +79,7 @@ fn drawBorderShowcase(r: *P.Renderer) void {
 
 fn drawAttributeShowcase(r: *P.Renderer) void {
     r.writeStyledText(11, 2, "Text attributes", heading);
-    const base: Style = .{ .fg = .{ .rgb = palette.slate_300 } };
+    const base: Style = .{ .fg = .{ .rgb = palette.subtext0 } };
     const samples = [_]struct { text: []const u8, override: Style }{
         .{ .text = "bold", .override = .{ .bold = true } },
         .{ .text = "dim", .override = .{ .dim = true } },
@@ -100,24 +100,20 @@ fn drawAttributeShowcase(r: *P.Renderer) void {
 
 const PaletteRow = struct { name: []const u8, stops: []const Rgb };
 
-const slate_stops = [_]Rgb{ palette.slate_50, palette.slate_300, palette.slate_500, palette.slate_700, palette.slate_900 };
-const rose_stops = [_]Rgb{ palette.rose_300, palette.rose_500, palette.rose_700 };
-const sky_stops = [_]Rgb{ palette.sky_300, palette.sky_500, palette.sky_700 };
-const amber_stops = [_]Rgb{ palette.amber_300, palette.amber_500, palette.amber_700 };
-const emerald_stops = [_]Rgb{ palette.emerald_300, palette.emerald_500, palette.emerald_700 };
-const violet_stops = [_]Rgb{ palette.violet_300, palette.violet_500, palette.violet_700 };
+const warm_accents = [_]Rgb{ palette.rosewater, palette.flamingo, palette.pink, palette.mauve, palette.red, palette.maroon, palette.peach };
+const cool_accents = [_]Rgb{ palette.yellow, palette.green, palette.teal, palette.sky, palette.sapphire, palette.blue, palette.lavender };
+const text_ramp = [_]Rgb{ palette.text, palette.subtext1, palette.subtext0, palette.overlay2, palette.overlay1, palette.overlay0 };
+const surfaces = [_]Rgb{ palette.surface2, palette.surface1, palette.surface0, palette.base, palette.mantle, palette.crust };
 
 const palette_rows = [_]PaletteRow{
-    .{ .name = "slate", .stops = &slate_stops },
-    .{ .name = "rose", .stops = &rose_stops },
-    .{ .name = "sky", .stops = &sky_stops },
-    .{ .name = "amber", .stops = &amber_stops },
-    .{ .name = "emerald", .stops = &emerald_stops },
-    .{ .name = "violet", .stops = &violet_stops },
+    .{ .name = "warm", .stops = &warm_accents },
+    .{ .name = "cool", .stops = &cool_accents },
+    .{ .name = "text", .stops = &text_ramp },
+    .{ .name = "surface", .stops = &surfaces },
 };
 
 fn drawPalette(r: *P.Renderer) void {
-    r.writeStyledText(14, 2, "Palette", heading);
+    r.writeStyledText(14, 2, "Catppuccin Mocha", heading);
     var row: u16 = 15;
     for (palette_rows) |entry| {
         r.writeStyledText(row, 2, entry.name, label);
@@ -134,11 +130,11 @@ fn drawPalette(r: *P.Renderer) void {
 fn drawColorHelpers(r: *P.Renderer) void {
     r.writeStyledText(22, 2, "Color helpers", heading);
 
-    // Hex parsing: roll a few literals through Rgb.fromHex.
+    // Hex parsing: roll a few Catppuccin literals through Rgb.fromHex.
     const hex_pairs = [_]struct { name: []const u8, hex: []const u8 }{
-        .{ .name = "#ff6b9d", .hex = "#ff6b9d" },
-        .{ .name = "#5bcef7", .hex = "#5bcef7" },
-        .{ .name = "#facc15", .hex = "#facc15" },
+        .{ .name = "#f38ba8", .hex = "#f38ba8" },
+        .{ .name = "#89dceb", .hex = "#89dceb" },
+        .{ .name = "#a6e3a1", .hex = "#a6e3a1" },
     };
     var col: u16 = 2;
     for (hex_pairs) |pair| {
@@ -149,7 +145,7 @@ fn drawColorHelpers(r: *P.Renderer) void {
     }
 
     // Darken / lighten ramps from a single seed color.
-    const seed = Rgb.fromHex("#8b5cf6") catch palette.violet_500;
+    const seed = palette.mauve;
     r.writeStyledText(24, 2, "darken", label);
     var x: u16 = 12;
     var t: f32 = 0;
@@ -176,7 +172,7 @@ fn drawPanel(r: *P.Renderer) void {
     const w: u16 = 76;
     const h: u16 = 4;
     r.drawBorderTitled(top, left, h, w, Border.rounded, accent_border, "merge + gradient", heading);
-    r.writeGradientText(top + 1, left + 2, "from violet, through sky, to emerald (gradient text)", palette.violet_500, palette.emerald_500, .{ .bold = true });
+    r.writeGradientText(top + 1, left + 2, "from mauve, through sky, to green (gradient text)", palette.mauve, palette.green, .{ .bold = true });
     r.writeStyledText(top + 2, left + 2, "drawBorderTitled frames the panel without a fill.", muted);
 }
 
