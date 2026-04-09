@@ -31,11 +31,14 @@ fn update(model: *Model, m: P.Msg) P.Cmd {
     return .none;
 }
 
+const pink: glym.style.Rgb = .{ .r = 255, .g = 107, .b = 157 };
+const cyan: glym.style.Rgb = .{ .r = 91, .g = 206, .b = 247 };
+
 fn view(model: *const Model, r: *P.Renderer) void {
     var buf: [64]u8 = undefined;
     const line = std.fmt.bufPrint(&buf, "Counter: {d}", .{model.count}) catch return;
-    r.writeText(1, 2, line);
-    r.writeText(3, 2, "up/down to change, q to quit");
+    r.writeGradientText(1, 2, line, pink, cyan, .{ .bold = true });
+    r.writeStyledText(3, 2, "up/down to change, q to quit", .{ .fg = .{ .indexed = 8 } });
 }
 
 pub fn main() !void {
