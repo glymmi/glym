@@ -45,7 +45,6 @@ const muted: Style = .{ .fg = .{ .rgb = palette.slate_500 }, .italic = true };
 const label: Style = .{ .fg = .{ .rgb = palette.slate_300 } };
 const heading: Style = .{ .fg = .{ .rgb = palette.violet_300 }, .bold = true };
 const accent_border: Style = .{ .fg = .{ .rgb = palette.violet_500 } };
-const surface: Style = .{ .bg = .{ .rgb = palette.slate_900 } };
 
 // -- sections --
 
@@ -62,18 +61,17 @@ const border_entries = [_]BorderEntry{
     .{ .name = "double", .border = Border.double },
     .{ .name = "thick", .border = Border.thick },
     .{ .name = "ascii", .border = Border.ascii },
-    .{ .name = "block", .border = Border.block },
 };
 
 fn drawBorderShowcase(r: *P.Renderer) void {
     r.writeStyledText(4, 2, "Borders", heading);
     const top: u16 = 5;
-    const box_w: u16 = 12;
+    const box_w: u16 = 14;
     const box_h: u16 = 4;
     const gap: u16 = 1;
     var col: u16 = 2;
     for (border_entries) |entry| {
-        r.drawBox(top, col, box_h, box_w, entry.border, accent_border, surface);
+        r.drawBorder(top, col, box_h, box_w, entry.border, accent_border);
         r.writeCenteredText(top + 1, col, box_w, entry.name, label);
         col += box_w + gap;
     }
@@ -172,15 +170,14 @@ fn drawColorHelpers(r: *P.Renderer) void {
 
 fn drawPanel(r: *P.Renderer) void {
     // Self-contained panel demonstrating drawBorderTitled + an inner
-    // gradient line, sitting against a slate surface.
+    // gradient line.
     const top: u16 = 27;
     const left: u16 = 2;
     const w: u16 = 76;
     const h: u16 = 4;
-    r.drawBox(top, left, h, w, Border.block, accent_border, surface);
-    r.drawBorderTitled(top, left, h, w, Border.block, accent_border, "merge + gradient", heading);
+    r.drawBorderTitled(top, left, h, w, Border.rounded, accent_border, "merge + gradient", heading);
     r.writeGradientText(top + 1, left + 2, "from violet, through sky, to emerald (gradient text)", palette.violet_500, palette.emerald_500, .{ .bold = true });
-    r.writeStyledText(top + 2, left + 2, "drawBox + drawBorderTitled compose into a single panel.", muted);
+    r.writeStyledText(top + 2, left + 2, "drawBorderTitled frames the panel without a fill.", muted);
 }
 
 fn view(_: *Model, r: *P.Renderer) void {
