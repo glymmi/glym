@@ -15,6 +15,7 @@ pub const TextArea = struct {
     row: usize,
     col: usize,
     scroll: usize,
+    scroll_col: usize,
 
     pub fn init(allocator: std.mem.Allocator) !TextArea {
         var lines: std.ArrayList(std.ArrayList(u21)) = .{};
@@ -25,6 +26,7 @@ pub const TextArea = struct {
             .row = 0,
             .col = 0,
             .scroll = 0,
+            .scroll_col = 0,
         };
     }
 
@@ -198,12 +200,28 @@ pub const TextArea = struct {
         return off;
     }
 
+    /// Compute horizontal scroll offset to keep `target_col` visible within
+    /// `width`. Uniform across all rendered rows so the cursor's column
+    /// stays on screen even when other lines are shorter or longer.
+    pub fn clampedHorizontalScroll(target_col: usize, width: usize, current: usize) usize {
+        if (width == 0) return 0;
+        var off = current;
+        if (target_col < off) {
+            off = target_col;
+        } else if (target_col >= off + width) {
+            off = target_col - width + 1;
+        }
+        return off;
+    }
+
     /// Render the text area into a rectangle of `height` rows and `width`
     /// columns starting at (row, col). The cursor cell is drawn with the
-    /// reverse attribute. Lines are truncated at width.
+    /// reverse attribute. Both vertical and horizontal scroll follow the
+    /// cursor automatically.
     pub fn view(self: *TextArea, r: *Renderer, row: u16, col: u16, height: u16, width: u16, style: Style) void {
         if (height == 0 or width == 0) return;
         self.scroll = clampedScroll(self.row, self.lines.items.len, height, self.scroll);
+        self.scroll_col = clampedHorizontalScroll(self.col, width, self.scroll_col);
         var line: u16 = 0;
         while (line < height) : (line += 1) {
             const li = self.scroll + line;
@@ -211,10 +229,11 @@ pub const TextArea = struct {
             if (li < self.lines.items.len) {
                 const data = self.lines.items[li].items;
                 while (p < width) : (p += 1) {
+                    const ch_idx = self.scroll_col + p;
                     var s = style;
                     var ch: u21 = ' ';
-                    if (p < data.len) ch = data[p];
-                    if (li == self.row and p == self.col) s.reverse = true;
+                    if (ch_idx < data.len) ch = data[ch_idx];
+                    if (li == self.row and ch_idx == self.col) s.reverse = true;
                     r.setCell(row + line, col + p, .{ .char = ch, .style = s });
                 }
             } else {
@@ -450,6 +469,22 @@ test "clampedScroll returns 0 for zero height" {
     try std.testing.expectEqual(@as(usize, 0), TextArea.clampedScroll(5, 10, 0, 3));
 }
 
+test "clampedHorizontalScroll keeps target visible scrolling right" {
+    try std.testing.expectEqual(@as(usize, 6), TextArea.clampedHorizontalScroll(10, 5, 0));
+}
+
+test "clampedHorizontalScroll keeps target visible scrolling left" {
+    try std.testing.expectEqual(@as(usize, 2), TextArea.clampedHorizontalScroll(2, 5, 8));
+}
+
+test "clampedHorizontalScroll preserves offset when target is visible" {
+    try std.testing.expectEqual(@as(usize, 4), TextArea.clampedHorizontalScroll(6, 5, 4));
+}
+
+test "clampedHorizontalScroll returns 0 for zero width" {
+    try std.testing.expectEqual(@as(usize, 0), TextArea.clampedHorizontalScroll(5, 0, 3));
+}
+
 // -- tests: view rendering --
 
 test "view writes lines into renderer" {
@@ -505,6 +540,21 @@ test "view fills empty rows below content" {
     ta.view(&r, 0, 0, 3, 5, .{});
     try std.testing.expectEqual(@as(u21, 'a'), r.back[0].char);
     try std.testing.expectEqual(@as(u21, ' '), r.back[5].char);
+}
+
+test "view scrolls horizontally to keep cursor visible" {
+    var ta = try TextArea.init(std.testing.allocator);
+    defer ta.deinit();
+    try ta.setValue("abcdefghij");
+    ta.row = 0;
+    ta.col = 9;
+    var r = try Renderer.init(std.testing.allocator, 1, 5);
+    defer r.deinit();
+    ta.view(&r, 0, 0, 1, 5, .{});
+    try std.testing.expectEqual(@as(usize, 5), ta.scroll_col);
+    try std.testing.expectEqual(@as(u21, 'f'), r.back[0].char);
+    try std.testing.expectEqual(@as(u21, 'j'), r.back[4].char);
+    try std.testing.expect(r.back[4].style.reverse);
 }
 
 test "view with zero height is a no-op" {
