@@ -23,8 +23,20 @@ pub fn build(b: *std.Build) void {
     });
     const run_tests = b.addRunArtifact(tests);
 
-    const test_step = b.step("test", "Run unit tests");
+    const integration_mod = b.createModule(.{
+        .root_source_file = b.path("tests/integration.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    integration_mod.addImport("glym", glym_mod);
+    const integration_tests = b.addTest(.{
+        .root_module = integration_mod,
+    });
+    const run_integration = b.addRunArtifact(integration_tests);
+
+    const test_step = b.step("test", "Run unit and integration tests");
     test_step.dependOn(&run_tests.step);
+    test_step.dependOn(&run_integration.step);
 
     addExample(b, glym_mod, target, optimize, "counter", "examples/counter/main.zig");
     addExample(b, glym_mod, target, optimize, "input", "examples/input/main.zig");
