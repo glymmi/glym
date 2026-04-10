@@ -13,11 +13,15 @@ const Rgb = shimmer.Rgb;
 const ColorLevel = shimmer.ColorLevel;
 const Border = shimmer.Border;
 
+/// A single terminal cell: one codepoint plus its visual style.
 pub const Cell = struct {
     char: u21 = ' ',
     style: Style = .{},
 };
 
+/// Double-buffered screen renderer. The view writes into the back buffer
+/// and `flush` diffs it against the front buffer to produce the minimum
+/// escape sequence output.
 pub const Renderer = struct {
     allocator: std.mem.Allocator,
     rows: u16,
@@ -51,6 +55,7 @@ pub const Renderer = struct {
         };
     }
 
+    /// Free the front and back buffers and the output list.
     pub fn deinit(self: *Renderer) void {
         self.allocator.free(self.front);
         self.allocator.free(self.back);

@@ -7,12 +7,14 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
+/// Errors that `RawMode.enable` and `RawMode.disable` may return.
 pub const Error = error{
     NotATerminal,
     GetAttrFailed,
     SetAttrFailed,
 };
 
+/// Platform-specific file handle (Windows `HANDLE` or POSIX `fd_t`).
 pub const Handle = if (builtin.os.tag == .windows)
     std.os.windows.HANDLE
 else
@@ -20,6 +22,8 @@ else
 
 const Original = if (builtin.os.tag == .windows) u32 else std.posix.termios;
 
+/// RAII guard for raw terminal mode. Call `enable` to enter, `disable`
+/// to restore the original state.
 pub const RawMode = struct {
     handle: Handle,
     original: Original,

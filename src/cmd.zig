@@ -10,6 +10,9 @@
 
 const std = @import("std");
 
+/// Build a command union for the given application message type. The
+/// returned tagged union carries the variants `none`, `quit`, `custom`
+/// and `async_task`.
 pub fn Cmd(comptime AppMsg: type) type {
     return union(enum) {
         none,

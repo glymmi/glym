@@ -9,6 +9,9 @@ const std = @import("std");
 const input = @import("term/input.zig");
 const term_size = @import("term/size.zig");
 
+/// Build a message union for the given application message type. The
+/// returned tagged union wraps built-in runtime events (`key`, `resize`,
+/// `quit`) together with the caller's own `AppMsg`.
 pub fn Msg(comptime AppMsg: type) type {
     return union(enum) {
         key: input.Key,

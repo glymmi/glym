@@ -75,3 +75,20 @@ test "classify default tty is basic" {
 test "classify missing env still basic on tty" {
     try std.testing.expectEqual(ColorLevel.basic, classify(null, null, true));
 }
+
+test "readTerm returns a string or null without crashing" {
+    if (builtin.os.tag == .windows) {
+        try std.testing.expectEqual(@as(?[]const u8, null), readTerm());
+    } else {
+        // On POSIX, result depends on the environment. Just verify no crash.
+        _ = readTerm();
+    }
+}
+
+test "readColorterm returns a string or null without crashing" {
+    if (builtin.os.tag == .windows) {
+        try std.testing.expectEqual(@as(?[]const u8, null), readColorterm());
+    } else {
+        _ = readColorterm();
+    }
+}

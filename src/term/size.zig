@@ -8,16 +8,19 @@ const std = @import("std");
 const builtin = @import("builtin");
 const raw = @import("raw.zig");
 
+/// Errors that `get` may return.
 pub const Error = error{
     NotATerminal,
     GetSizeFailed,
 };
 
+/// Terminal dimensions in character cells.
 pub const Size = struct {
     rows: u16,
     cols: u16,
 };
 
+/// POSIX `struct winsize` layout, used by the `TIOCGWINSZ` ioctl.
 pub const Winsize = extern struct {
     ws_row: u16,
     ws_col: u16,

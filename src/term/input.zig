@@ -7,12 +7,14 @@
 
 const std = @import("std");
 
+/// Modifier keys that may accompany a key press.
 pub const Modifiers = packed struct {
     shift: bool = false,
     ctrl: bool = false,
     alt: bool = false,
 };
 
+/// The logical identity of a key press.
 pub const KeyCode = union(enum) {
     char: u21,
     enter,
@@ -32,11 +34,14 @@ pub const KeyCode = union(enum) {
     f: u8,
 };
 
+/// A fully decoded key event: a `KeyCode` plus any active `Modifiers`.
 pub const Key = struct {
     code: KeyCode,
     modifiers: Modifiers = .{},
 };
 
+/// The output of a successful `parse` call: the decoded key and how many
+/// bytes were consumed from the input slice.
 pub const ParseResult = struct {
     key: Key,
     consumed: usize,

@@ -5,17 +5,25 @@
 
 const std = @import("std");
 
+/// The ASCII escape byte (`\x1b`).
 pub const ESC = "\x1b";
+/// Control Sequence Introducer (`ESC [``).
 pub const CSI = ESC ++ "[";
 
+/// Clear the entire screen and move the cursor to 1,1.
 pub const clear_screen = CSI ++ "2J" ++ CSI ++ "H";
 
+/// Hide the text cursor.
 pub const hide_cursor = CSI ++ "?25l";
+/// Show the text cursor.
 pub const show_cursor = CSI ++ "?25h";
 
+/// Enter the alternate screen buffer.
 pub const enter_alt_screen = CSI ++ "?1049h";
+/// Leave the alternate screen buffer and restore the main one.
 pub const leave_alt_screen = CSI ++ "?1049l";
 
+/// Reset all SGR attributes to their defaults.
 pub const reset = CSI ++ "0m";
 
 /// Move the cursor to (row, col), 1-indexed. Caller owns the returned slice.

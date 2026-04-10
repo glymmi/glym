@@ -19,19 +19,31 @@ const renderer_mod = @import("renderer.zig");
 const msg_mod = @import("msg.zig");
 const cmd_mod = @import("cmd.zig");
 
+/// Build an MVU runtime parameterized over the user's Model and AppMsg
+/// types. The caller supplies init, update and view functions and calls
+/// `run`, which drives the terminal read/parse/update/render loop.
 pub fn Program(comptime Model: type, comptime AppMsg: type) type {
     return struct {
         const Self = @This();
 
+        /// Runtime message union wrapping keys, resize and app events.
         pub const Msg = msg_mod.Msg(AppMsg);
+        /// Runtime command union (`none`, `quit`, `custom`, `async_task`).
         pub const Cmd = cmd_mod.Cmd(AppMsg);
+        /// Screen renderer used by the view function.
         pub const Renderer = renderer_mod.Renderer;
+        /// Terminal color support level.
         pub const ColorLevel = shimmer.ColorLevel;
+        /// Result of a single `step`: keep the loop going or quit.
         pub const StepResult = enum { keep_running, quit };
 
+        /// Signature for the model constructor.
         pub const InitFn = *const fn (std.mem.Allocator) anyerror!Model;
+        /// Signature for the update function (model + msg -> cmd).
         pub const UpdateFn = *const fn (*Model, Msg) Cmd;
+        /// Signature for the view function (model + renderer -> void).
         pub const ViewFn = *const fn (*Model, *Renderer) void;
+        /// Signature for the optional model destructor.
         pub const DeinitFn = *const fn (*Model, std.mem.Allocator) void;
 
         allocator: std.mem.Allocator,
