@@ -17,7 +17,6 @@ pub const program = @import("program.zig");
 pub const Program = program.Program;
 pub const ColorLevel = @import("shimmer").ColorLevel;
 pub const detectColorLevel = program.detectColorLevel;
-pub const widget = @import("widget.zig");
 
 pub const version = "0.0.1";
 
