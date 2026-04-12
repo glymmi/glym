@@ -102,6 +102,14 @@ pub fn Program(comptime Model: type, comptime AppMsg: type) type {
                     }
                     break :blk .keep_running;
                 },
+                .batch => |cmds| blk: {
+                    for (cmds) |sub| {
+                        if (try self.runCmd(sub, model, runner) == .quit) {
+                            break :blk .quit;
+                        }
+                    }
+                    break :blk .keep_running;
+                },
             };
         }
 
@@ -186,6 +194,15 @@ pub fn Program(comptime Model: type, comptime AppMsg: type) type {
             var raw_mode = try raw.RawMode.enable(stdin_handle);
             defer raw_mode.disable() catch {};
 
+            // Windows: enable VT processing on stdout so the terminal
+            // interprets ANSI escape sequences instead of printing them
+            // raw. Restored on exit via the saved original mode.
+            const stdout_vt: ?VtMode = if (builtin.os.tag == .windows)
+                enableVtProcessing(stdout_handle)
+            else
+                null;
+            defer if (stdout_vt) |vt| restoreVtProcessing(stdout_handle, vt);
+
             try writeAll(stdout_handle, ansi.enter_alt_screen);
             defer writeAll(stdout_handle, ansi.leave_alt_screen) catch {};
 
@@ -215,6 +232,11 @@ pub fn Program(comptime Model: type, comptime AppMsg: type) type {
             var model = try self.init_fn(self.allocator);
             defer if (self.deinit_fn) |df| df(&model, self.allocator);
 
+            // Send the initial terminal size as a resize event so
+            // apps can start background work (e.g. packet capture)
+            // immediately without waiting for the first keypress.
+            _ = try self.stepInner(&model, .{ .resize = current_size }, &runner);
+
             renderer.clear();
             self.view_fn(&model, &renderer);
             try writeAll(stdout_handle, try renderer.flush());
@@ -237,18 +259,35 @@ pub fn Program(comptime Model: type, comptime AppMsg: type) type {
                         error.ReadFailed => break,
                         else => return err,
                     };
-                    if (n == 0) break;
-                    try pending.appendSlice(self.allocator, read_buf[0..n]);
+                    // On Windows, n==0 means ReadConsoleInputW consumed
+                    // non-key events (focus, mouse). Treat like a tick.
+                    // On POSIX, n==0 means EOF.
+                    if (n == 0) {
+                        if (builtin.os.tag != .windows) break;
+                    } else {
+                        try pending.appendSlice(self.allocator, read_buf[0..n]);
 
-                    while (input.parse(pending.items)) |result| {
-                        const remaining = pending.items[result.consumed..];
-                        std.mem.copyForwards(u8, pending.items[0..remaining.len], remaining);
-                        pending.shrinkRetainingCapacity(remaining.len);
+                        while (input.parse(pending.items)) |result| {
+                            const remaining = pending.items[result.consumed..];
+                            std.mem.copyForwards(u8, pending.items[0..remaining.len], remaining);
+                            pending.shrinkRetainingCapacity(remaining.len);
 
-                        const wrapped: Msg = .{ .key = result.key };
-                        if (try self.stepInner(&model, wrapped, &runner) == .quit) {
+                            const wrapped: Msg = .{ .key = result.key };
+                            if (try self.stepInner(&model, wrapped, &runner) == .quit) {
+                                should_quit = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                // Windows tick: when no real key input arrived (timeout
+                // or only non-key console events), run one update with a
+                // null-char key so inline async_task chains keep running.
+                if (builtin.os.tag == .windows) {
+                    if (!wake.input_ready or pending.items.len == 0) {
+                        if (try self.stepInner(&model, .{ .key = .{ .code = .{ .char = 0 } } }, &runner) == .quit) {
                             should_quit = true;
-                            break;
                         }
                     }
                 }
@@ -365,10 +404,11 @@ const ResizePipe = struct {
 
     fn wait(self: *ResizePipe, stdin_handle: raw.Handle, async_fd: AsyncFd) !Wake {
         if (builtin.os.tag == .windows) {
-            // Windows path stays blocking on stdin; resize is polled
-            // after each read in the main loop, and async tasks run
-            // inline.
-            return .{ .input_ready = true, .resize_ready = false, .async_ready = false };
+            // Wait up to 50ms for console input. Returns immediately
+            // when input is available, or after timeout so the tick
+            // path can run inline async_task chains.
+            const rc = std.os.windows.kernel32.WaitForSingleObject(stdin_handle, 50);
+            return .{ .input_ready = rc == 0, .resize_ready = false, .async_ready = false };
         }
         var fd_buf: [3]std.posix.pollfd = undefined;
         fd_buf[0] = .{ .fd = stdin_handle, .events = std.posix.POLL.IN, .revents = 0 };
@@ -398,6 +438,9 @@ const ResizePipe = struct {
 
 const AsyncFd = if (builtin.os.tag == .windows) void else std.posix.fd_t;
 
+// (WinTimer removed: replaced by WaitForSingleObject timeout +
+// ReadConsoleInputW which does not block on non-key events.)
+
 fn stdinHandle() raw.Handle {
     if (builtin.os.tag == .windows) {
         return std.os.windows.peb().ProcessParameters.hStdInput;
@@ -414,12 +457,74 @@ fn stdoutHandle() raw.Handle {
 
 fn readBytes(handle: raw.Handle, buf: []u8) !usize {
     if (builtin.os.tag == .windows) {
-        var read_count: u32 = 0;
-        if (std.os.windows.kernel32.ReadFile(handle, buf.ptr, @intCast(buf.len), &read_count, null) == 0)
-            return error.ReadFailed;
-        return read_count;
+        return readConsoleInput(handle, buf);
     }
     return std.posix.read(handle, buf) catch return error.ReadFailed;
+}
+
+// Windows console input via ReadConsoleInputW. Reads input records
+// directly and extracts character bytes from KEY_EVENT records. Unlike
+// ReadFile, this does not block on non-key events (focus, mouse,
+// window buffer size) that WaitForSingleObject signals for.
+fn readConsoleInput(handle: raw.Handle, buf: []u8) !usize {
+    if (builtin.os.tag != .windows) return error.ReadFailed;
+
+    const KEY_EVENT: u16 = 0x0001;
+
+    const KeyEventRecord = extern struct {
+        bKeyDown: std.os.windows.BOOL,
+        wRepeatCount: u16,
+        wVirtualKeyCode: u16,
+        wVirtualScanCode: u16,
+        uChar: u16,
+        dwControlKeyState: u32,
+    };
+
+    const InputRecord = extern struct {
+        EventType: u16,
+        pad: u16 = 0,
+        Event: KeyEventRecord,
+    };
+
+    const k32 = struct {
+        extern "kernel32" fn ReadConsoleInputW(
+            hConsoleInput: std.os.windows.HANDLE,
+            lpBuffer: [*]InputRecord,
+            nLength: u32,
+            lpNumberOfEventsRead: *u32,
+        ) callconv(.winapi) std.os.windows.BOOL;
+    };
+
+    var records: [32]InputRecord = undefined;
+    var count: u32 = 0;
+    if (k32.ReadConsoleInputW(handle, &records, 32, &count) == 0)
+        return error.ReadFailed;
+
+    var pos: usize = 0;
+    for (records[0..count]) |rec| {
+        if (rec.EventType == KEY_EVENT and rec.Event.bKeyDown != 0) {
+            const ch = rec.Event.uChar;
+            if (ch == 0) continue;
+            if (pos >= buf.len) break;
+            // UTF-16 code unit to UTF-8
+            if (ch < 0x80) {
+                buf[pos] = @intCast(ch);
+                pos += 1;
+            } else if (ch < 0x800) {
+                if (pos + 1 >= buf.len) break;
+                buf[pos] = @intCast(0xC0 | (ch >> 6));
+                buf[pos + 1] = @intCast(0x80 | (ch & 0x3F));
+                pos += 2;
+            } else {
+                if (pos + 2 >= buf.len) break;
+                buf[pos] = @intCast(0xE0 | (ch >> 12));
+                buf[pos + 1] = @intCast(0x80 | ((ch >> 6) & 0x3F));
+                buf[pos + 2] = @intCast(0x80 | (ch & 0x3F));
+                pos += 3;
+            }
+        }
+    }
+    return pos;
 }
 
 fn writeAll(handle: raw.Handle, bytes: []const u8) !void {
@@ -440,6 +545,38 @@ fn writeAll(handle: raw.Handle, bytes: []const u8) !void {
         if (n == 0) return error.WriteFailed;
         remaining = remaining[n..];
     }
+}
+
+// Windows stdout VT processing. Enables ANSI escape sequence
+// interpretation which is off by default on older Windows consoles.
+// Also sets the output code page to UTF-8 so Unicode characters
+// (box-drawing, etc.) render correctly.
+const VtMode = struct {
+    original_mode: u32,
+    original_cp: u32,
+};
+
+const ENABLE_PROCESSED_OUTPUT: u32 = 0x0001;
+const ENABLE_VIRTUAL_TERMINAL_PROCESSING: u32 = 0x0004;
+
+extern "kernel32" fn SetConsoleOutputCP(wCodePageID: u32) callconv(.winapi) std.os.windows.BOOL;
+extern "kernel32" fn GetConsoleOutputCP() callconv(.winapi) u32;
+
+fn enableVtProcessing(handle: raw.Handle) ?VtMode {
+    if (builtin.os.tag != .windows) return null;
+    var mode: u32 = 0;
+    if (std.os.windows.kernel32.GetConsoleMode(handle, &mode) == 0) return null;
+    const new_mode = mode | ENABLE_PROCESSED_OUTPUT | ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+    if (std.os.windows.kernel32.SetConsoleMode(handle, new_mode) == 0) return null;
+    const old_cp = GetConsoleOutputCP();
+    _ = SetConsoleOutputCP(65001); // UTF-8
+    return .{ .original_mode = mode, .original_cp = old_cp };
+}
+
+fn restoreVtProcessing(handle: raw.Handle, vt: VtMode) void {
+    if (builtin.os.tag != .windows) return;
+    _ = std.os.windows.kernel32.SetConsoleMode(handle, vt.original_mode);
+    _ = SetConsoleOutputCP(vt.original_cp);
 }
 
 test "step propagates quit from update" {

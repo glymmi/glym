@@ -19,6 +19,9 @@ pub fn Cmd(comptime AppMsg: type) type {
         quit,
         custom: *const fn (std.mem.Allocator) anyerror!?AppMsg,
         async_task: *const fn (std.mem.Allocator) anyerror!?AppMsg,
+        /// Run several commands in order. If any yields `quit`, the
+        /// remaining commands are skipped and the runtime exits.
+        batch: []const @This(),
     };
 }
 

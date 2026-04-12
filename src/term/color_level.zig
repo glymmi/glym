@@ -20,6 +20,10 @@ const ColorLevel = @import("shimmer").ColorLevel;
 ///   4. Anything else -> `.basic`.
 pub fn classify(term: ?[]const u8, colorterm: ?[]const u8, is_tty: bool) ColorLevel {
     if (!is_tty) return .none;
+    // Windows Terminal and PowerShell support truecolor natively.
+    // The TERM/COLORTERM env vars are not set on Windows, so we
+    // default to truecolor instead of falling through to basic.
+    if (builtin.os.tag == .windows) return .truecolor;
     if (term) |t| {
         if (std.mem.eql(u8, t, "dumb")) return .none;
     }
