@@ -15,6 +15,7 @@ const term_size = @import("term/size.zig");
 pub fn Msg(comptime AppMsg: type) type {
     return union(enum) {
         key: input.Key,
+        mouse: input.MouseEvent,
         resize: term_size.Size,
         quit,
         app: AppMsg,

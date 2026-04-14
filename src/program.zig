@@ -209,6 +209,9 @@ pub fn Program(comptime Model: type, comptime AppMsg: type) type {
             try writeAll(stdout_handle, ansi.hide_cursor);
             defer writeAll(stdout_handle, ansi.show_cursor) catch {};
 
+            try writeAll(stdout_handle, ansi.enable_mouse);
+            defer writeAll(stdout_handle, ansi.disable_mouse) catch {};
+
             try writeAll(stdout_handle, ansi.clear_screen);
 
             // POSIX resize wakeup: a self-pipe driven by SIGWINCH lets the
@@ -272,7 +275,10 @@ pub fn Program(comptime Model: type, comptime AppMsg: type) type {
                             std.mem.copyForwards(u8, pending.items[0..remaining.len], remaining);
                             pending.shrinkRetainingCapacity(remaining.len);
 
-                            const wrapped: Msg = .{ .key = result.key };
+                            const wrapped: Msg = switch (result.event) {
+                                .key => |k| .{ .key = k },
+                                .mouse => |m| .{ .mouse = m },
+                            };
                             if (try self.stepInner(&model, wrapped, &runner) == .quit) {
                                 should_quit = true;
                                 break;

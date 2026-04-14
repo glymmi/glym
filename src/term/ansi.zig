@@ -23,6 +23,11 @@ pub const enter_alt_screen = CSI ++ "?1049h";
 /// Leave the alternate screen buffer and restore the main one.
 pub const leave_alt_screen = CSI ++ "?1049l";
 
+/// Enable SGR mouse tracking (button events + SGR coordinate encoding).
+pub const enable_mouse = CSI ++ "?1000h" ++ CSI ++ "?1006h";
+/// Disable SGR mouse tracking.
+pub const disable_mouse = CSI ++ "?1000l" ++ CSI ++ "?1006l";
+
 /// Reset all SGR attributes to their defaults.
 pub const reset = CSI ++ "0m";
 
